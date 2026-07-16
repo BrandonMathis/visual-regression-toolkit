@@ -1,0 +1,8 @@
+node_modules/
+dist/
+.visual-regression/
+playwright-report/
+test-results/
+tests/fixtures/next-app/.next/
+package-lock.json
+CHANGELOG.md

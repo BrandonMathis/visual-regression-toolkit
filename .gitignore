@@ -1,0 +1,15 @@
+node_modules/
+dist/
+*.tgz
+
+/.visual-regression/
+/playwright-report/
+/test-results/
+
+tests/fixtures/next-app/.next/
+tests/fixtures/next-app/node_modules/
+tests/fixtures/next-app/.visual-regression/
+tests/fixtures/next-app/playwright-report/
+tests/fixtures/next-app/test-results/
+
+.DS_Store
