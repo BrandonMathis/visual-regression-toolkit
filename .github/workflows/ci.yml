@@ -146,6 +146,11 @@ jobs:
           set -euo pipefail
           npm ci
 
+      - name: Build
+        run: |
+          set -euo pipefail
+          npm run build
+
       - name: End-to-end tests
         run: |
           set -euo pipefail

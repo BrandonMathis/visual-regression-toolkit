@@ -135,8 +135,13 @@ body {
 const BUILD_BREAKER = '\nthis is not valid javascript ((( {{{\n';
 
 let baselineCopyDir: string | null = null;
-let originalGlobalsCss: Buffer;
-let originalHomePage: Buffer;
+let originalGlobalsCss: Buffer | undefined;
+let originalHomePage: Buffer | undefined;
+
+function captured(buf: Buffer | undefined, name: string): Buffer {
+  if (buf === undefined) throw new Error(`${name} was not captured in beforeAll`);
+  return buf;
+}
 
 describe('full lifecycle against the built CLI (fixture next-app, --host)', () => {
   beforeAll(async () => {
@@ -151,8 +156,9 @@ describe('full lifecycle against the built CLI (fixture next-app, --host)', () =
   });
 
   afterAll(async () => {
-    await writeFile(globalsCssPath, originalGlobalsCss);
-    await writeFile(homePagePath, originalHomePage);
+    // beforeAll may have failed before the originals were read.
+    if (originalGlobalsCss !== undefined) await writeFile(globalsCssPath, originalGlobalsCss);
+    if (originalHomePage !== undefined) await writeFile(homePagePath, originalHomePage);
     for (const dir of ['.visual-regression', 'playwright-report', 'test-results']) {
       await rm(path.join(fixtureDir, dir), { recursive: true, force: true });
     }
@@ -232,7 +238,7 @@ describe('full lifecycle against the built CLI (fixture next-app, --host)', () =
       expect(baselineCopyDir).not.toBeNull();
       await writeFile(
         globalsCssPath,
-        `${originalGlobalsCss.toString('utf8')}${STARK_CSS_OVERRIDE}`,
+        `${captured(originalGlobalsCss, 'globals.css').toString('utf8')}${STARK_CSS_OVERRIDE}`,
       );
       try {
         const run = await runCli([
@@ -262,7 +268,7 @@ describe('full lifecycle against the built CLI (fixture next-app, --host)', () =
           expect(diffStat.size).toBeGreaterThan(0);
         }
       } finally {
-        await writeFile(globalsCssPath, originalGlobalsCss);
+        await writeFile(globalsCssPath, captured(originalGlobalsCss, 'globals.css'));
       }
     },
     TEST_TIMEOUT_MS,
@@ -272,7 +278,10 @@ describe('full lifecycle against the built CLI (fixture next-app, --host)', () =
     'compare with a broken fixture build fails as infrastructure-error BUILD_FAILED (exit 1)',
     async () => {
       expect(baselineCopyDir).not.toBeNull();
-      await writeFile(homePagePath, `${originalHomePage.toString('utf8')}${BUILD_BREAKER}`);
+      await writeFile(
+        homePagePath,
+        `${captured(originalHomePage, 'page.js').toString('utf8')}${BUILD_BREAKER}`,
+      );
       try {
         const run = await runCli([
           'compare',
@@ -288,7 +297,7 @@ describe('full lifecycle against the built CLI (fixture next-app, --host)', () =
         expect(result.status).toBe('infrastructure-error');
         expect(result.errors[0]?.code).toBe('BUILD_FAILED');
       } finally {
-        await writeFile(homePagePath, originalHomePage);
+        await writeFile(homePagePath, captured(originalHomePage, 'page.js'));
       }
     },
     TEST_TIMEOUT_MS,
