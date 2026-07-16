@@ -149,11 +149,23 @@ describe('full lifecycle against the built CLI (fixture next-app, --host)', () =
       existsSync(binPath),
       `Built CLI not found at ${binPath}; run \`npm run build\` before \`npm run test:e2e\``,
     ).toBe(true);
+    // The fixture is a standalone npm package; a fresh checkout (CI) has no
+    // node_modules there, and its build command would die with exit 127.
+    if (!existsSync(path.join(fixtureDir, 'node_modules', 'next'))) {
+      await new Promise<void>((resolve, reject) => {
+        execFile(
+          'npm',
+          ['ci', '--no-fund', '--no-audit'],
+          { cwd: fixtureDir, timeout: STEP_TIMEOUT_MS, maxBuffer: MAX_BUFFER_BYTES },
+          (error) => (error ? reject(error) : resolve()),
+        );
+      });
+    }
     // Captured up front so afterAll can always restore the fixture sources,
     // even if a phase dies between mutate and its own finally-restore.
     originalGlobalsCss = await readFile(globalsCssPath);
     originalHomePage = await readFile(homePagePath);
-  });
+  }, STEP_TIMEOUT_MS);
 
   afterAll(async () => {
     // beforeAll may have failed before the originals were read.
