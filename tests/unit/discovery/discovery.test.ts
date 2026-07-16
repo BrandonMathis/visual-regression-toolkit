@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { discoverRoutes } from '../../../src/discovery/index.js';
 import { VisualRegressionError } from '../../../src/errors.js';
 import { fixturePath, makeConfig } from './helpers.js';
@@ -73,11 +73,10 @@ describe('discoverRoutes', () => {
       const descriptors = await discoverRoutes(makeConfig());
       expect(descriptors.map((d) => d.route)).toEqual([
         '/',
-        '/404',
-        '/500',
         '/about',
         '/blog/first-post',
         '/blog/second-post',
+        '/release/v1.2',
       ]);
     });
 
@@ -91,15 +90,46 @@ describe('discoverRoutes', () => {
       expect(descriptors.map((d) => d.route)).not.toContain('/_internal/debug');
     });
 
-    it('drops routes whose final segment contains a "."', async () => {
+    it('drops well-known metadata routes', async () => {
       const routes = (await discoverRoutes(makeConfig())).map((d) => d.route);
       expect(routes).not.toContain('/favicon.ico');
       expect(routes).not.toContain('/robots.txt');
       expect(routes).not.toContain('/sitemap.xml');
     });
 
-    it('keeps prerendered /404 and /500 error pages', async () => {
+    it('keeps dotted routes that are not well-known metadata files', async () => {
       const routes = (await discoverRoutes(makeConfig())).map((d) => d.route);
+      expect(routes).toContain('/release/v1.2');
+    });
+
+    it('warns on stderr once, listing routes excluded by the metadata rule', async () => {
+      const write = vi.spyOn(process.stderr, 'write').mockReturnValue(true);
+      try {
+        await discoverRoutes(makeConfig());
+        const warnings = write.mock.calls
+          .map((call) => String(call[0]))
+          .filter((line) => line.includes('metadata route'));
+        expect(warnings).toHaveLength(1);
+        const warning = warnings[0] as string;
+        expect(warning).toContain('/favicon.ico');
+        expect(warning).toContain('/robots.txt');
+        expect(warning).toContain('/sitemap.xml');
+        expect(warning).not.toContain('/release/v1.2');
+      } finally {
+        write.mockRestore();
+      }
+    });
+
+    it('drops prerendered /404 and /500 error pages (direct navigation returns non-200)', async () => {
+      const routes = (await discoverRoutes(makeConfig())).map((d) => d.route);
+      expect(routes).not.toContain('/404');
+      expect(routes).not.toContain('/500');
+    });
+
+    it('keeps /404 and /500 when explicitly opted in via routes.additional', async () => {
+      const routes = (await discoverRoutes(makeConfig({ additional: ['/404', '/500'] }))).map(
+        (d) => d.route,
+      );
       expect(routes).toContain('/404');
       expect(routes).toContain('/500');
     });
@@ -125,16 +155,15 @@ describe('discoverRoutes', () => {
 
     it('applies exclude globs after include globs', async () => {
       const descriptors = await discoverRoutes(
-        makeConfig({ include: ['/**'], exclude: ['/blog/**', '/404', '/500'] }),
+        makeConfig({ include: ['/**'], exclude: ['/blog/**', '/release/**'] }),
       );
       expect(descriptors.map((d) => d.route)).toEqual(['/', '/about']);
     });
 
     it('supports ? and * in globs', async () => {
-      const descriptors = await discoverRoutes(makeConfig({ include: ['/?0?', '/blog/*-post'] }));
+      const descriptors = await discoverRoutes(makeConfig({ include: ['/abou?', '/blog/*-post'] }));
       expect(descriptors.map((d) => d.route)).toEqual([
-        '/404',
-        '/500',
+        '/about',
         '/blog/first-post',
         '/blog/second-post',
       ]);

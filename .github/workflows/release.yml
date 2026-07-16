@@ -54,6 +54,26 @@ jobs:
             exit 1
           fi
 
+      # The reusable workflows embed the exact package version they pair with
+      # (plan section 12). A release whose workflows expect a different
+      # version would fail every consumer run with TOOLKIT_VERSION_MISMATCH.
+      - name: Verify workflows embed the release version
+        run: |
+          set -euo pipefail
+          version="$(node -p "require('./package.json').version")"
+          status=0
+          for wf in .github/workflows/visual-baseline.yml .github/workflows/visual-regression.yml; do
+            embedded="$(sed -nE "s/^[[:space:]]*EXPECTED_TOOLKIT_VERSION:[[:space:]]*'([^']+)'.*/\1/p" "$wf")"
+            if [ -z "$embedded" ]; then
+              echo "${wf} does not embed EXPECTED_TOOLKIT_VERSION" >&2
+              status=1
+            elif [ "$embedded" != "$version" ]; then
+              echo "${wf} embeds EXPECTED_TOOLKIT_VERSION '${embedded}', expected '${version}'" >&2
+              status=1
+            fi
+          done
+          exit "$status"
+
       - name: Install dependencies
         run: |
           set -euo pipefail
@@ -83,6 +103,60 @@ jobs:
         run: |
           set -euo pipefail
           npm run build
+
+      # The env block above duplicates src/runtime.ts so the release notes can
+      # record the coupled runtime identity. Fail the release if either copy
+      # (or any container pin in the workflows) drifts from the built package.
+      - name: Verify env matches compiled runtime identity
+        run: |
+          set -euo pipefail
+          node --input-type=module - <<'SCRIPT'
+          import { readFileSync } from 'node:fs';
+          import * as runtime from './dist/runtime.js';
+          const pairs = [
+            ['NODE_MAJOR', String(runtime.NODE_MAJOR)],
+            ['PLAYWRIGHT_VERSION', runtime.PLAYWRIGHT_VERSION],
+            ['CHROMIUM_REVISION', runtime.CHROMIUM_REVISION],
+            ['CHROMIUM_VERSION', runtime.CHROMIUM_VERSION],
+            ['CONTAINER_IMAGE', runtime.CONTAINER_IMAGE],
+            ['CONTAINER_DIGEST', runtime.CONTAINER_DIGEST],
+            ['CONTAINER_PLATFORM', runtime.CONTAINER_PLATFORM],
+            ['BASELINE_MANIFEST_SCHEMA_VERSION', String(runtime.BASELINE_MANIFEST_SCHEMA_VERSION)],
+            ['VISUAL_RESULT_SCHEMA_VERSION', String(runtime.VISUAL_RESULT_SCHEMA_VERSION)],
+          ];
+          const problems = [];
+          for (const [name, value] of pairs) {
+            if (process.env[name] !== value) {
+              problems.push(
+                `release.yml env ${name}='${process.env[name] ?? ''}' does not match ` +
+                  `dist/runtime.js '${value}'`,
+              );
+            }
+          }
+          const pin = `${runtime.CONTAINER_IMAGE}@${runtime.CONTAINER_DIGEST}`;
+          const workflows = [
+            '.github/workflows/ci.yml',
+            '.github/workflows/release.yml',
+            '.github/workflows/visual-baseline.yml',
+            '.github/workflows/visual-regression.yml',
+          ];
+          for (const workflow of workflows) {
+            const imageLines = readFileSync(workflow, 'utf8')
+              .split('\n')
+              .filter((line) => /^\s*image:/.test(line));
+            for (const line of imageLines) {
+              const value = line.replace(/^\s*image:\s*/, '').trim();
+              if (value !== pin) {
+                problems.push(`${workflow} pins container '${value}', expected '${pin}'`);
+              }
+            }
+          }
+          if (problems.length > 0) {
+            for (const problem of problems) console.error(problem);
+            process.exit(1);
+          }
+          console.log('Release env matches the compiled runtime identity.');
+          SCRIPT
 
       - name: Verify package contents
         run: |
@@ -114,9 +188,68 @@ jobs:
           set -euo pipefail
           npm run test:integration
 
+  e2e:
+    name: End-to-end tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    container:
+      image: mcr.microsoft.com/playwright:v1.61.1-noble@sha256:5b8f294aff9041b7191c34a4bab3ac270157a28774d4b0660e9743297b697e48
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Install dependencies
+        run: |
+          set -euo pipefail
+          npm ci
+
+      - name: End-to-end tests
+        run: |
+          set -euo pipefail
+          npm run test:e2e
+
+  workflow-security:
+    name: Workflow security
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      ACTIONLINT_VERSION: '1.7.12'
+      ACTIONLINT_SHA256: '8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8'
+      ZIZMOR_VERSION: '1.27.0'
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Run actionlint
+        run: |
+          set -euo pipefail
+          archive="actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          curl -fsSL -o "/tmp/${archive}" \
+            "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/${archive}"
+          echo "${ACTIONLINT_SHA256}  /tmp/${archive}" | sha256sum --check --strict
+          tar -xzf "/tmp/${archive}" -C /tmp actionlint
+          /tmp/actionlint -color
+
+      - name: Run zizmor
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          pipx run "zizmor==${ZIZMOR_VERSION}" .github/workflows
+
   publish:
     name: Publish to npm
-    needs: [verify, integration]
+    needs: [verify, integration, e2e, workflow-security]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:

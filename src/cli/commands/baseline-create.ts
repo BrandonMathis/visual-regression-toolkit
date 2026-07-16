@@ -1,5 +1,6 @@
 import path from 'node:path';
 import { createBaseline, verifyBaseline } from '../../baseline/index.js';
+import { VisualRegressionError } from '../../errors.js';
 import { computeVisualContractHash, loadConfig } from '../../config/index.js';
 import { BASELINE_OUT_DIR, RESULT_DIR } from '../../paths.js';
 import { writeResult } from '../../result/index.js';
@@ -24,6 +25,30 @@ export interface BaselineCreateOptions {
   json: boolean;
 }
 
+/** UTC date ('2026-07-16') or UTC timestamp ('2026-07-16T00:00:00.000Z'). */
+const LOGICAL_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z)?$/;
+
+/**
+ * Plan §8.2: the workflow resolves ONE logical date at job start and exports
+ * it in the configured clock env var. When that variable is already set it is
+ * the logical date; a fresh timestamp is minted only for standalone runs.
+ */
+function resolveLogicalDate(clockVar: string): string {
+  const preset = process.env[clockVar];
+  if (preset === undefined || preset === '') {
+    return new Date().toISOString();
+  }
+  if (!LOGICAL_DATE_PATTERN.test(preset) || Number.isNaN(Date.parse(preset))) {
+    throw new VisualRegressionError(
+      'CONFIG_INVALID',
+      `Environment variable ${clockVar} is set but is not a valid ISO-8601 UTC date or ` +
+        `timestamp: '${preset}'`,
+      { context: { variable: clockVar, value: preset } },
+    );
+  }
+  return preset;
+}
+
 export async function runBaselineCreate(
   options: BaselineCreateOptions,
   logger: Logger,
@@ -41,7 +66,7 @@ export async function runBaselineCreate(
     visualContractHash = computeVisualContractHash(config);
     const identity = await resolveRunIdentity(repoRoot);
     candidateSha = identity.sourceSha;
-    const logicalDate = new Date().toISOString();
+    const logicalDate = resolveLogicalDate(config.clock.environmentVariable);
 
     const { routes, screenshotsDir } = await buildDiscoverCapture({
       repoRoot,

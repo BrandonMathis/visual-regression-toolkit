@@ -20,6 +20,82 @@ const trimmedString = z
   .refine((value) => value.trim().length > 0, 'must be a non-empty string')
   .transform((value) => value.trim());
 
+/**
+ * Conservative structural validation for CSS selectors (readinessSelectors and
+ * masks, plan §5.2 "reject invalid selectors"). This is not a CSS parser: it
+ * catches typos and garbage at config-load time (unbalanced quotes/brackets,
+ * control characters, comments, characters that can never appear unquoted in a
+ * selector) while staying permissive for all valid CSS — attribute selectors,
+ * :nth-child(2n+1), escaped characters like `.a\:b`. Playwright performs the
+ * final, authoritative selector validation at capture time.
+ *
+ * Returns a human-readable problem description, or null when the selector
+ * passes the structural checks.
+ */
+function selectorProblem(selector: string): string | null {
+  if (/[\u0000-\u001f\u007f]/u.test(selector)) {
+    return 'must not contain control characters or newlines';
+  }
+  const first = selector.charAt(0);
+  if (first === '>' || first === '+' || first === '~' || first === ',') {
+    return `must not start with the combinator "${first}"`;
+  }
+  const closerToOpener: Record<string, string> = { ')': '(', ']': '[', '}': '{' };
+  const openStack: string[] = [];
+  let quote: '"' | "'" | null = null;
+  for (let i = 0; i < selector.length; i += 1) {
+    const char = selector.charAt(i);
+    if (char === '\\') {
+      if (i + 1 === selector.length) {
+        return 'must not end with a dangling "\\" escape';
+      }
+      i += 1; // A CSS escape consumes the next character (quoted or not).
+      continue;
+    }
+    if (quote !== null) {
+      if (char === quote) {
+        quote = null;
+      }
+      continue;
+    }
+    if (char === '"' || char === "'") {
+      quote = char;
+    } else if (char === '`') {
+      return 'must not contain a backtick outside quotes';
+    } else if (char === ';') {
+      return 'must not contain a semicolon outside quotes';
+    } else if (char === '/' && selector.charAt(i + 1) === '*') {
+      return 'must not contain a comment ("/*")';
+    } else if (char === '*' && selector.charAt(i + 1) === '/') {
+      return 'must not contain "*/"';
+    } else if (char === '(' || char === '[' || char === '{') {
+      openStack.push(char);
+    } else if (char === ')' || char === ']' || char === '}') {
+      if (openStack.pop() !== closerToOpener[char]) {
+        return `has an unbalanced "${char}"`;
+      }
+    }
+  }
+  if (quote !== null) {
+    return `has an unbalanced ${quote} quote`;
+  }
+  const unclosed = openStack.pop();
+  if (unclosed !== undefined) {
+    return `has an unbalanced "${unclosed}"`;
+  }
+  return null;
+}
+
+const selectorString = trimmedString.superRefine((value, ctx) => {
+  const problem = selectorProblem(value);
+  if (problem !== null) {
+    ctx.addIssue({
+      code: 'custom',
+      message: `invalid CSS selector ${JSON.stringify(value)}: ${problem}`,
+    });
+  }
+});
+
 /** Route globs, additional routes, and readiness paths share the same safety rules. */
 const routeString = z.string().superRefine((value, ctx) => {
   if (!value.startsWith('/')) {
@@ -194,8 +270,8 @@ function buildConfigSchema(repoRoot: string) {
         timezoneId: trimmedString.optional(),
         reducedMotion: z.enum(['reduce', 'no-preference']).optional(),
         fontChecks: z.array(trimmedString).optional(),
-        readinessSelectors: z.array(trimmedString).optional(),
-        masks: z.array(trimmedString).optional(),
+        readinessSelectors: z.array(selectorString).optional(),
+        masks: z.array(selectorString).optional(),
         externalRequests: z
           .strictObject({
             default: z.enum(['block', 'allow']).optional(),

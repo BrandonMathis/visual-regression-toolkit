@@ -108,6 +108,69 @@ describe('cli commands', () => {
       expect(code).toBe(1);
       expect(verifyBaseline).not.toHaveBeenCalled();
     });
+
+    describe('runtime compatibility (plan 5.4)', () => {
+      it('rejects a mismatched playwrightVersion with BASELINE_INCOMPATIBLE and exit 1', async () => {
+        vi.mocked(verifyBaseline).mockResolvedValue(makeManifest({ playwrightVersion: '1.50.0' }));
+        const code = await runCli(['baseline', 'verify', 'some/baseline']);
+        expect(code).toBe(1);
+        expect(stdio.stdout.join('')).toBe('');
+        const stderr = stdio.stderr.join('');
+        expect(stderr).toContain('BASELINE_INCOMPATIBLE');
+        expect(stderr).toContain('playwrightVersion');
+      });
+
+      it('rejects a mismatched chromiumRevision', async () => {
+        vi.mocked(verifyBaseline).mockResolvedValue(makeManifest({ chromiumRevision: '999' }));
+        const code = await runCli(['baseline', 'verify', 'some/baseline']);
+        expect(code).toBe(1);
+        expect(stdio.stderr.join('')).toContain('chromiumRevision');
+      });
+
+      it('rejects a different toolkit major version', async () => {
+        vi.mocked(verifyBaseline).mockResolvedValue(
+          makeManifest({ toolkit: { name: '@thisdot/visual-regression', version: '2.0.0' } }),
+        );
+        const code = await runCli(['baseline', 'verify', 'some/baseline']);
+        expect(code).toBe(1);
+        expect(stdio.stderr.join('')).toContain('toolkitMajor');
+      });
+
+      it('rejects a different manifest schemaVersion', async () => {
+        vi.mocked(verifyBaseline).mockResolvedValue(makeManifest({ schemaVersion: 2 }));
+        const code = await runCli(['baseline', 'verify', 'some/baseline']);
+        expect(code).toBe(1);
+        expect(stdio.stderr.join('')).toContain('schemaVersion');
+      });
+
+      it('rejects an unknown containerDigest', async () => {
+        vi.mocked(verifyBaseline).mockResolvedValue(
+          makeManifest({
+            environment: {
+              os: 'linux',
+              arch: 'x64',
+              containerDigest: `sha256:${'1'.repeat(64)}`,
+              platform: 'linux/amd64',
+            },
+          }),
+        );
+        const code = await runCli(['baseline', 'verify', 'some/baseline']);
+        expect(code).toBe(1);
+        expect(stdio.stderr.join('')).toContain('containerDigest');
+      });
+
+      it("accepts containerDigest 'host' with a diagnostic-only warning", async () => {
+        vi.mocked(verifyBaseline).mockResolvedValue(
+          makeManifest({
+            environment: { os: 'darwin', arch: 'arm64', containerDigest: 'host', platform: 'host' },
+          }),
+        );
+        const code = await runCli(['baseline', 'verify', 'some/baseline']);
+        expect(code).toBe(0);
+        expect(stdio.stdout.join('')).toContain('baseline: ok');
+        expect(stdio.stderr.join('')).toMatch(/diagnostic-only/i);
+      });
+    });
   });
 
   describe('config hash', () => {

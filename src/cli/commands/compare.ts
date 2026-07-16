@@ -1,5 +1,9 @@
 import path from 'node:path';
-import { checkBaselineCompatibility, verifyBaseline } from '../../baseline/index.js';
+import {
+  checkBaselineCompatibility,
+  verifyBaseline,
+  verifyBaselineAgainstManifest,
+} from '../../baseline/index.js';
 import { computeVisualContractHash, loadConfig } from '../../config/index.js';
 import { DIFFS_DIRNAME, RESULT_DIR } from '../../paths.js';
 import { compareAgainstBaseline, writeResult } from '../../result/index.js';
@@ -102,10 +106,17 @@ export async function runCompare(options: CompareOptions, logger: Logger): Promi
       },
     });
 
+    // Plan §9.9/§9.11: the consumer's untrusted build/start ran between the
+    // first verification and here, so re-verify every baseline screenshot
+    // against the manifest retained from that first verification immediately
+    // before comparison. Tampering surfaces as BASELINE_CORRUPT / exit 1.
+    await verifyBaselineAgainstManifest(baselineDir, manifest);
+
     const outcome = await compareAgainstBaseline({
       config,
       baselineDir,
       baselineManifest: manifest,
+      candidateRoutes: routes,
       candidateScreenshotsDir: screenshotsDir,
       diffDir: path.resolve(repoRoot, RESULT_DIR, DIFFS_DIRNAME),
     });

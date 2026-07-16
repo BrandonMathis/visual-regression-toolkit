@@ -338,6 +338,51 @@ describe('resolveConfig', () => {
     expectInvalid({ ...base, capture: { fontChecks: ['\t'] } }, 'capture.fontChecks[0]');
   });
 
+  it('accepts complex but valid CSS selectors', () => {
+    const selectors = [
+      '[data-x="a b"]',
+      'main > .item:nth-child(2n+1)',
+      '.a\\:b',
+      '[data-note="semi;colon"]',
+      ':is(h1, h2):not(.hidden)',
+    ];
+    const resolved = resolve({
+      ...minimalConfig(),
+      capture: { readinessSelectors: selectors, masks: selectors },
+    });
+    expect(resolved.capture.readinessSelectors).toEqual([...selectors].sort());
+    expect(resolved.capture.masks).toEqual([...selectors].sort());
+  });
+
+  it('rejects structurally invalid CSS selectors with CONFIG_INVALID', () => {
+    const base = minimalConfig();
+    const cases: Array<[string, string]> = [
+      ['[data-x="a]', 'unbalanced'],
+      ['div[', 'unbalanced "["'],
+      ['main > )', 'unbalanced ")"'],
+      ['div; drop', 'semicolon'],
+      ['`main`', 'backtick'],
+      ['div\n[', 'control characters'],
+      ['div /* comment */', 'comment'],
+      ['> main', 'combinator'],
+      ['.a\\', 'dangling'],
+    ];
+    for (const [selector, fragment] of cases) {
+      expectInvalid(
+        { ...base, capture: { readinessSelectors: [selector] } },
+        'capture.readinessSelectors[0]',
+        'invalid CSS selector',
+        fragment,
+      );
+      expectInvalid(
+        { ...base, capture: { masks: ['.ok', selector] } },
+        'capture.masks[1]',
+        'invalid CSS selector',
+        fragment,
+      );
+    }
+  });
+
   it('rejects out-of-range screenshot thresholds', () => {
     const withThreshold = (threshold: number) => ({
       ...minimalConfig(),

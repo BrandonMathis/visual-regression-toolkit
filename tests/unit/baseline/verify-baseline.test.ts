@@ -2,14 +2,21 @@ import { createHash } from 'node:crypto';
 import { readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { createBaseline, verifyBaseline } from '../../../src/baseline/index.js';
+import {
+  createBaseline,
+  verifyBaseline,
+  verifyBaselineAgainstManifest,
+} from '../../../src/baseline/index.js';
 import { MANIFEST_NAME } from '../../../src/paths.js';
 import type { BaselineManifest } from '../../../src/types.js';
 import {
+  PNG_HEIGHT,
+  PNG_WIDTH,
   cleanupFixtures,
   editManifest,
   expectVisualError,
   makeBaselineFixture,
+  makePng,
 } from './helpers.js';
 
 afterEach(cleanupFixtures);
@@ -168,6 +175,64 @@ describe('verifyBaseline screenshot content checks', () => {
 
     const error = await expectVisualError(verifyBaseline(baselineDir), 'BASELINE_CORRUPT');
     expect(error.message).toContain('byte size');
+  });
+});
+
+describe('verifyBaselineAgainstManifest (re-verification before comparison)', () => {
+  it('passes for an untouched baseline', async () => {
+    const { baselineDir, manifest } = await makeVerifiedBaseline();
+    await expect(verifyBaselineAgainstManifest(baselineDir, manifest)).resolves.toBeUndefined();
+  });
+
+  it('rejects a PNG tampered after the initial verification with BASELINE_CORRUPT', async () => {
+    const { baselineDir, manifest } = await makeVerifiedBaseline();
+    const entry = firstScreenshot(manifest);
+    const filePath = join(baselineDir, entry.path);
+    const data = await readFile(filePath);
+    data[data.length - 1] = (data[data.length - 1] ?? 0) ^ 0xff;
+    await writeFile(filePath, data);
+
+    const error = await expectVisualError(
+      verifyBaselineAgainstManifest(baselineDir, manifest),
+      'BASELINE_CORRUPT',
+    );
+    expect(error.message).toContain('checksum');
+    expect(error.context.path).toBe(entry.path);
+  });
+
+  it('rejects tampering even when the on-disk manifest was rewritten to match', async () => {
+    const { baselineDir, manifest } = await makeVerifiedBaseline();
+    const entry = firstScreenshot(manifest);
+    const replacement = makePng(PNG_WIDTH, PNG_HEIGHT, 99);
+    await writeFile(join(baselineDir, entry.path), replacement);
+    // A tamperer running inside the untrusted build can rewrite the on-disk
+    // manifest self-consistently, so a disk-anchored verify passes...
+    await editManifest(baselineDir, (edited) => {
+      const editedEntry = firstScreenshot(edited);
+      editedEntry.bytes = replacement.length;
+      editedEntry.sha256 = createHash('sha256').update(replacement).digest('hex');
+    });
+    await expect(verifyBaseline(baselineDir)).resolves.toBeDefined();
+
+    // ...but re-verification anchored to the retained in-memory manifest
+    // still catches the substitution.
+    const error = await expectVisualError(
+      verifyBaselineAgainstManifest(baselineDir, manifest),
+      'BASELINE_CORRUPT',
+    );
+    expect(error.message).toContain(entry.path);
+  });
+
+  it('rejects extra files that appeared after the initial verification', async () => {
+    const { baselineDir, manifest } = await makeVerifiedBaseline();
+    await writeFile(join(baselineDir, 'screenshots', 'desktop', 'rogue.png'), Buffer.from('x'));
+
+    const error = await expectVisualError(
+      verifyBaselineAgainstManifest(baselineDir, manifest),
+      'BASELINE_CORRUPT',
+    );
+    expect(error.message).toContain('Unexpected file');
+    expect(error.context.path).toContain('rogue.png');
   });
 });
 

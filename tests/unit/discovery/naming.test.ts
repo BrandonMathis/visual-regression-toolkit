@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { assignScreenshotNames, screenshotNameForRoute } from '../../../src/discovery/index.js';
 import { VisualRegressionError } from '../../../src/errors.js';
@@ -86,6 +88,30 @@ describe('screenshotNameForRoute', () => {
     });
   });
 
+  describe('trailing-dot stems', () => {
+    it('encodes a trailing dot of the stem as _2E_ instead of producing "..png"', () => {
+      expect(screenshotNameForRoute('/v2.')).toBe('v2_2E_.png');
+      expect(screenshotNameForRoute('/release/v2.')).toBe('release--v2_2E_.png');
+    });
+
+    it('leaves non-final dotted segments untouched', () => {
+      expect(screenshotNameForRoute('/v2./notes')).toBe('v2.--notes.png');
+    });
+
+    it('produces a name that satisfies the baseline manifest screenshotName pattern', () => {
+      const schemaPath = fileURLToPath(
+        new URL('../../../schemas/baseline-manifest.schema.json', import.meta.url),
+      );
+      const schema = JSON.parse(readFileSync(schemaPath, 'utf8')) as {
+        properties: {
+          routes: { items: { properties: { screenshotName: { pattern: string } } } };
+        };
+      };
+      const pattern = new RegExp(schema.properties.routes.items.properties.screenshotName.pattern);
+      expect(pattern.test(screenshotNameForRoute('/v2.'))).toBe(true);
+    });
+  });
+
   describe('invalid routes', () => {
     const invalid = [
       ['relative path', 'about'],
@@ -145,6 +171,12 @@ describe('assignScreenshotNames', () => {
   it('detects collisions between encoded characters and literal escapes', () => {
     // '/a b' encodes to 'a_20_b.png'; '/a_20_b' produces it literally.
     const error = errorFrom(() => assignScreenshotNames(['/a b', '/a_20_b']));
+    expect(error.code).toBe('SCREENSHOT_NAME_COLLISION');
+  });
+
+  it('detects collisions between trailing-dot encoding and literal _2E_ routes', () => {
+    // '/v2.' encodes its trailing dot as _2E_; '/v2_2E_' produces it literally.
+    const error = errorFrom(() => assignScreenshotNames(['/v2.', '/v2_2E_']));
     expect(error.code).toBe('SCREENSHOT_NAME_COLLISION');
   });
 

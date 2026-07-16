@@ -21,6 +21,7 @@ vi.mock('../../../src/capture/index.js', () => ({
 vi.mock('../../../src/baseline/index.js', () => ({
   createBaseline: vi.fn(),
   verifyBaseline: vi.fn(),
+  verifyBaselineAgainstManifest: vi.fn(),
   checkBaselineCompatibility: vi.fn(),
 }));
 vi.mock('../../../src/result/index.js', () => ({
@@ -32,7 +33,11 @@ vi.mock('../../../src/reporters/index.js', () => ({
   renderMarkdownSummary: vi.fn(() => ''),
 }));
 
-import { checkBaselineCompatibility, verifyBaseline } from '../../../src/baseline/index.js';
+import {
+  checkBaselineCompatibility,
+  verifyBaseline,
+  verifyBaselineAgainstManifest,
+} from '../../../src/baseline/index.js';
 import { captureRoutes, runBuild, startServer } from '../../../src/capture/index.js';
 import { runCli } from '../../../src/cli/index.js';
 import { computeVisualContractHash, loadConfig } from '../../../src/config/index.js';
@@ -101,6 +106,7 @@ describe('compare', () => {
     vi.mocked(loadConfig).mockResolvedValue(config);
     vi.mocked(computeVisualContractHash).mockReturnValue(CONTRACT_HASH);
     vi.mocked(verifyBaseline).mockResolvedValue(makeManifest({ logicalDate: LOGICAL_DATE }));
+    vi.mocked(verifyBaselineAgainstManifest).mockResolvedValue(undefined);
     vi.mocked(checkBaselineCompatibility).mockReturnValue(undefined);
     vi.mocked(runBuild).mockResolvedValue(undefined);
     vi.mocked(discoverRoutes).mockResolvedValue([{ route: '/', screenshotName: 'home.png' }]);
@@ -139,6 +145,9 @@ describe('compare', () => {
     const compareInputs = vi.mocked(compareAgainstBaseline).mock.calls[0]![0];
     expect(compareInputs.baselineDir).toBe(path.join(repoRoot, BASELINE_ARG));
     expect(compareInputs.diffDir).toBe(path.join(repoRoot, '.visual-regression/result/diffs'));
+    // The discovered candidate descriptors preserve original route values for
+    // added screenshots (plan 6.9).
+    expect(compareInputs.candidateRoutes).toEqual([{ route: '/', screenshotName: 'home.png' }]);
 
     const result = vi.mocked(writeResult).mock.calls[0]![1];
     expect(result.operation).toBe('compare');
@@ -255,6 +264,37 @@ describe('compare', () => {
     const result = vi.mocked(writeResult).mock.calls[0]![1];
     expect(result.status).toBe('infrastructure-error');
     expect(result.errors[0]!.code).toBe('CONFIG_INVALID');
+  });
+
+  it('re-verifies the baseline against the retained manifest after capture, before compare', async () => {
+    const code = await runCli(['compare', '--baseline', BASELINE_ARG]);
+    expect(code).toBe(0);
+
+    expect(verifyBaselineAgainstManifest).toHaveBeenCalledTimes(1);
+    expect(verifyBaselineAgainstManifest).toHaveBeenCalledWith(
+      path.join(repoRoot, BASELINE_ARG),
+      expect.objectContaining({ logicalDate: LOGICAL_DATE }),
+    );
+    const reverifyOrder = vi.mocked(verifyBaselineAgainstManifest).mock.invocationCallOrder[0]!;
+    expect(reverifyOrder).toBeGreaterThan(vi.mocked(captureRoutes).mock.invocationCallOrder[0]!);
+    expect(reverifyOrder).toBeLessThan(
+      vi.mocked(compareAgainstBaseline).mock.invocationCallOrder[0]!,
+    );
+  });
+
+  it('fails with BASELINE_CORRUPT and never compares when re-verification detects tampering', async () => {
+    vi.mocked(verifyBaselineAgainstManifest).mockRejectedValue(
+      new VisualRegressionError('BASELINE_CORRUPT', 'Screenshot checksum mismatch', {
+        context: { path: 'screenshots/desktop/home.png' },
+      }),
+    );
+    const code = await runCli(['compare', '--baseline', BASELINE_ARG]);
+    expect(code).toBe(1);
+    expect(compareAgainstBaseline).not.toHaveBeenCalled();
+
+    const result = vi.mocked(writeResult).mock.calls[0]![1];
+    expect(result.status).toBe('infrastructure-error');
+    expect(result.errors[0]!.code).toBe('BASELINE_CORRUPT');
   });
 
   it('stops the server even when captureRoutes rejects and never exits 2', async () => {

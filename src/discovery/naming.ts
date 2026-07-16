@@ -58,7 +58,14 @@ export function screenshotNameForRoute(route: string): string {
   if (segments.some((segment) => /^\.+$/.test(segment))) {
     throw invalidName(route, 'dot-only path segments are not allowed');
   }
-  const stem = segments.map(encodeSegment).join('--');
+  let stem = segments.map(encodeSegment).join('--');
+  // A stem ending in '.' would yield "<stem>..png", which the baseline
+  // manifest schema's screenshotName pattern (no "..") rejects. Encode the
+  // trailing dot as its _XX_ escape; assignScreenshotNames collision-checks
+  // the result against literal '_2E_' routes as usual.
+  if (stem.endsWith('.')) {
+    stem = `${stem.slice(0, -1)}_2E_`;
+  }
   const name = `${stem}.png`;
   if (name.length <= MAX_NAME_LENGTH) {
     return name;

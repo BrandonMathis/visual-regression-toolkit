@@ -64,14 +64,34 @@ export function toVisualError(error: unknown): VisualRegressionError {
   return new VisualRegressionError('INTERNAL_ERROR', message, { cause: error });
 }
 
+/**
+ * Bounds on failure-result error entries, within the limits enforced by
+ * schemas/visual-result.schema.json (message 5000, context values 1000,
+ * 100 context keys), so a failure result ALWAYS validates and
+ * visual-result.json is written on every failure path (plan §10).
+ */
+const MAX_ERROR_MESSAGE_LENGTH = 5000;
+const MAX_CONTEXT_VALUE_LENGTH = 500;
+const MAX_CONTEXT_ENTRIES = 20;
+
+function truncate(value: string, maxLength: number): string {
+  return value.length > maxLength ? `${value.slice(0, maxLength - 1)}…` : value;
+}
+
 export function errorEntry(error: VisualRegressionError): VisualResultError {
   const entry: VisualResultError = {
     code: error.code,
-    message: error.message,
+    message: truncate(error.message, MAX_ERROR_MESSAGE_LENGTH),
     retryable: error.retryable,
   };
-  if (Object.keys(error.context).length > 0) {
-    entry.context = error.context;
+  const contextEntries = Object.entries(error.context).slice(0, MAX_CONTEXT_ENTRIES);
+  if (contextEntries.length > 0) {
+    entry.context = Object.fromEntries(
+      contextEntries.map(([key, value]) => [
+        truncate(key, MAX_CONTEXT_VALUE_LENGTH),
+        truncate(value, MAX_CONTEXT_VALUE_LENGTH),
+      ]),
+    );
   }
   return entry;
 }

@@ -21,6 +21,7 @@ import type {
   BaselineManifest,
   ComparisonEntry,
   ResolvedVisualConfig,
+  RouteDescriptor,
   VisualResult,
 } from '../types.js';
 
@@ -28,6 +29,12 @@ export interface CompareInputs {
   config: ResolvedVisualConfig;
   baselineDir: string;
   baselineManifest: BaselineManifest;
+  /**
+   * Route descriptors discovered for the candidate. Authoritative for
+   * candidate screenshot names, so added routes keep their original route
+   * values (plan 6.9) instead of a lossy screenshot-name inversion.
+   */
+  candidateRoutes?: RouteDescriptor[];
   /** Candidate screenshots at <candidateScreenshotsDir>/<project>/<name>. */
   candidateScreenshotsDir: string;
   /** Diff PNGs are written to <diffDir>/<project>/<name>. */
@@ -166,9 +173,17 @@ export async function compareAgainstBaseline(inputs: CompareInputs): Promise<Com
   const { repoRoot } = config;
   const threshold = config.capture.screenshot.threshold;
 
+  // Candidate descriptors are authoritative for candidate files (they carry
+  // the original route values for added screenshots); baseline manifest
+  // routes fill in names the candidate did not discover.
   const routeByName = new Map<string, string>();
-  for (const descriptor of baselineManifest.routes) {
+  for (const descriptor of inputs.candidateRoutes ?? []) {
     routeByName.set(descriptor.screenshotName, descriptor.route);
+  }
+  for (const descriptor of baselineManifest.routes) {
+    if (!routeByName.has(descriptor.screenshotName)) {
+      routeByName.set(descriptor.screenshotName, descriptor.route);
+    }
   }
 
   const expected = new Map<string, ScreenshotFile>();

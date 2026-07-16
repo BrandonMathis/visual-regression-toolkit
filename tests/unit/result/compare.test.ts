@@ -39,11 +39,13 @@ function inputs(
   routes: RouteDescriptor[],
   screenshots: ManifestScreenshot[],
   threshold = 0.2,
+  candidateRoutes?: RouteDescriptor[],
 ): CompareInputs {
   return {
     config: makeConfig(repoRoot, threshold),
     baselineDir,
     baselineManifest: makeManifest(routes, screenshots),
+    ...(candidateRoutes === undefined ? {} : { candidateRoutes }),
     candidateScreenshotsDir: candidateDir,
     diffDir,
   };
@@ -154,6 +156,59 @@ describe('compareAgainstBaseline', () => {
       diffPath: null,
       diffPixelRatio: null,
     });
+  });
+
+  it('reports the original route for added screenshots described by candidateRoutes', async () => {
+    await writePngFile(
+      path.join(candidateDir, 'desktop', 'blog--post-1.png'),
+      solidPng(4, 4, WHITE),
+    );
+
+    const outcome = await compareAgainstBaseline(
+      inputs([], [], 0.2, [{ route: '/blog/post-1', screenshotName: 'blog--post-1.png' }]),
+    );
+
+    expect(outcome.added).toBe(1);
+    expect(outcome.entries[0]?.status).toBe('added');
+    expect(outcome.entries[0]?.route).toBe('/blog/post-1');
+  });
+
+  it('reports a unicode candidate route verbatim from candidateRoutes', async () => {
+    await writePngFile(
+      path.join(candidateDir, 'desktop', 'caf_C3__A9_.png'),
+      solidPng(4, 4, WHITE),
+    );
+
+    const outcome = await compareAgainstBaseline(
+      inputs([], [], 0.2, [{ route: '/café', screenshotName: 'caf_C3__A9_.png' }]),
+    );
+
+    expect(outcome.added).toBe(1);
+    expect(outcome.entries[0]?.route).toBe('/café');
+  });
+
+  it('prefers the candidate route over the baseline manifest route for the same name', async () => {
+    await writePngFile(path.join(candidateDir, 'desktop', 'about.png'), solidPng(4, 4, WHITE));
+
+    const outcome = await compareAgainstBaseline(
+      inputs([{ route: '/about-old', screenshotName: 'about.png' }], [], 0.2, [
+        { route: '/about', screenshotName: 'about.png' },
+      ]),
+    );
+
+    expect(outcome.entries[0]?.route).toBe('/about');
+  });
+
+  it('falls back to the lossy name inversion when candidateRoutes is absent', async () => {
+    await writePngFile(
+      path.join(candidateDir, 'desktop', 'blog--post-1.png'),
+      solidPng(4, 4, WHITE),
+    );
+
+    const outcome = await compareAgainstBaseline(inputs([], []));
+
+    expect(outcome.added).toBe(1);
+    expect(outcome.entries[0]?.route).toBe('/blog--post-1');
   });
 
   it('uses the manifest route for added screenshots whose name is a known route', async () => {

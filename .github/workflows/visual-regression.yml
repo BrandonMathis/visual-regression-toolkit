@@ -247,9 +247,37 @@ jobs:
               if (matching.length > 0) {
                 const usable = matching.filter((c) => c.artifact.expired !== true);
                 if (usable.length === 0) {
+                  // An expired artifact is not a valid baseline. If a fresh
+                  // publication for this exact SHA is active, wait for it
+                  // within the same bounded budget (plan section 9 step 7).
+                  const active = [
+                    ...(await listRuns('queued')),
+                    ...(await listRuns('in_progress')),
+                  ];
+                  if (active.length > 0 && Date.now() < deadline) {
+                    waited = true;
+                    core.info(
+                      `Every baseline artifact for ${baseSha} has expired, but a baseline ` +
+                        `publication is active (${active.length} run(s)); ` +
+                        `waiting ${pollIntervalMs / 1000}s...`,
+                    );
+                    await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+                    continue;
+                  }
+                  if (active.length > 0) {
+                    await failWithSummary(
+                      'BASELINE_NOT_READY',
+                      `Every baseline artifact for base SHA ${baseSha} has expired and the ` +
+                        'republication run was still running after waiting 10 minutes.',
+                      'Re-run this check once the baseline workflow for the base commit ' +
+                        'finishes.',
+                    );
+                    return;
+                  }
                   await failWithSummary(
                     'BASELINE_NOT_FOUND',
-                    `Every baseline artifact for base SHA ${baseSha} has expired.`,
+                    `Every baseline artifact for base SHA ${baseSha} has expired` +
+                      `${waited ? ' (after waiting for active runs)' : ''}.`,
                     'Publish a fresh baseline for the base commit (push, schedule, or ' +
                       'manual dispatch of the baseline workflow), then re-run this check.',
                   );

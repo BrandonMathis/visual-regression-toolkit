@@ -54,19 +54,24 @@ Before tagging a release:
    zizmor .github/workflows
    ```
 
-2. `npm pack --dry-run` contains only intended files (`dist`, `schemas`, `README.md`, `LICENSE`).
-3. Documentation reflects the release: configuration, CLI commands, workflow inputs, artifacts,
+2. The release commit couples the workflows to the released package: `EXPECTED_TOOLKIT_VERSION`
+   in `.github/workflows/visual-baseline.yml` and `.github/workflows/visual-regression.yml`
+   equals the `package.json` version, and the runtime identity values in the release workflow's
+   `env` block (and every container pin) match `src/runtime.ts`. The release workflow's verify
+   job enforces both and fails the release on drift.
+3. `npm pack --dry-run` contains only intended files (`dist`, `schemas`, `README.md`, `LICENSE`).
+4. Documentation reflects the release: configuration, CLI commands, workflow inputs, artifacts,
    result codes, and baseline lifecycle; plus seeding, artifact expiry, config-changing PR
    rollout, upgrade, rollback, and intentional-visual-change procedures.
-4. The release record pairs the exact npm package version with the immutable workflow commit SHA,
+5. The release record pairs the exact npm package version with the immutable workflow commit SHA,
    Node major, exact Playwright version, Chromium revision, container digest/platform, and
    manifest/result schema versions — the table above, updated for the new values.
-5. Focused reviews of baseline correctness, workflow security, and screenshot determinism have no
+6. Focused reviews of baseline correctness, workflow security, and screenshot determinism have no
    unresolved blocker or high-severity findings.
-6. The released package/workflow pair passes the complete fixture lifecycle: baseline publication,
+7. The released package/workflow pair passes the complete fixture lifecycle: baseline publication,
    unchanged comparison, deliberate pixel change, added/removed routes, every infrastructure
    failure, exact-SHA rejection, logical-date reuse, and malformed untrusted-output handling.
-7. Publish the immutable release: npm publish via trusted publishing, then a release tag whose
+8. Publish the immutable release: npm publish via trusted publishing, then a release tag whose
    notes record the pairing so consumers can fill in `FULL_RELEASE_COMMIT_SHA`.
 
 After release, a clean consumer must be able to adopt the toolkit using only

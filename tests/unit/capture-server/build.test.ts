@@ -1,9 +1,9 @@
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { afterAll, describe, expect, it } from 'vitest';
+import { afterAll, describe, expect, it, vi } from 'vitest';
 import { runBuild } from '../../../src/capture/server.js';
-import { expectVisualError, makeConfig } from './helpers.js';
+import { expectVisualError, makeConfig, pidAlive, waitFor } from './helpers.js';
 
 const tmpDir = mkdtempSync(path.join(os.tmpdir(), 'vr-build-test-'));
 
@@ -48,5 +48,63 @@ describe('runBuild', () => {
     const error = await expectVisualError(runBuild(config, {}), 'BUILD_FAILED');
     expect(error.context.signal).toBe('SIGTERM');
     expect(error.context.exitCode).toBeUndefined();
+  });
+
+  it('registers SIGINT/SIGTERM handlers while the build runs and removes them on exit', async () => {
+    const sigintBefore = process.listenerCount('SIGINT');
+    const sigtermBefore = process.listenerCount('SIGTERM');
+
+    const config = makeConfig(tmpDir, {
+      build: `node -e 'setTimeout(() => {}, 300)'`,
+    });
+    const building = runBuild(config, {});
+    expect(process.listenerCount('SIGINT')).toBe(sigintBefore + 1);
+    expect(process.listenerCount('SIGTERM')).toBe(sigtermBefore + 1);
+
+    await building;
+    expect(process.listenerCount('SIGINT')).toBe(sigintBefore);
+    expect(process.listenerCount('SIGTERM')).toBe(sigtermBefore);
+  });
+
+  it('removes signal handlers when the build fails', async () => {
+    const sigintBefore = process.listenerCount('SIGINT');
+    const config = makeConfig(tmpDir, { build: 'node -e "process.exit(3)"' });
+    await expectVisualError(runBuild(config, {}), 'BUILD_FAILED');
+    expect(process.listenerCount('SIGINT')).toBe(sigintBefore);
+  });
+
+  it('SIGINT during the build kills the detached build process group, including grandchildren', async () => {
+    const pidFile = path.join(tmpDir, 'signal-grandchild-pid.txt');
+    // Swallow the handler's re-raise so the test process survives; every
+    // other pid (the process-group kill, pidAlive probes) passes through.
+    const realKill = process.kill.bind(process);
+    const killSpy = vi
+      .spyOn(process, 'kill')
+      .mockImplementation((pid: number, signal?: string | number) => {
+        if (pid === process.pid) return true;
+        return realKill(pid, signal);
+      });
+
+    try {
+      // The build leader spawns a long-lived grandchild in the same process
+      // group and then sleeps forever; only a group kill reaps them both.
+      const config = makeConfig(tmpDir, {
+        build: `node -e 'const { spawn } = require("node:child_process"); spawn(process.execPath, ["-e", "require(\\"node:fs\\").writeFileSync(process.env.PID_FILE, String(process.pid)); setInterval(() => {}, 1e9)"], { stdio: "ignore" }); setInterval(() => {}, 1e9)'`,
+      });
+
+      const failed = expectVisualError(runBuild(config, { PID_FILE: pidFile }), 'BUILD_FAILED');
+      await waitFor(() => existsSync(pidFile), 'grandchild to write its pid file');
+      const pid = Number.parseInt(readFileSync(pidFile, 'utf8'), 10);
+      expect(pidAlive(pid)).toBe(true);
+
+      process.emit('SIGINT', 'SIGINT');
+
+      const error = await failed;
+      expect(error.context.signal).toBe('SIGKILL');
+      await waitFor(() => !pidAlive(pid), 'grandchild to be killed with the group');
+      expect(killSpy).toHaveBeenCalledWith(process.pid, 'SIGINT');
+    } finally {
+      killSpy.mockRestore();
+    }
   });
 });

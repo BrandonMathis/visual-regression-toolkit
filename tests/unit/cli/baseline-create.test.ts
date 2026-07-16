@@ -65,6 +65,8 @@ describe('baseline create', () => {
     vi.clearAllMocks();
     repoRoot = await makeRepoRoot();
     stubGitHubEnv();
+    // An empty clock env var counts as unset: a fresh timestamp is minted.
+    vi.stubEnv('VISUAL_TEST_DATE', '');
     stdio = captureStdio();
     const config = makeConfig(repoRoot);
     vi.mocked(loadConfig).mockResolvedValue(config);
@@ -119,6 +121,40 @@ describe('baseline create', () => {
     );
     expect(captureOpts.playwrightReportDir).toBe(path.join(repoRoot, 'playwright-report/visual'));
     expect(captureOpts.testResultsDir).toBe(path.join(repoRoot, 'test-results/visual'));
+  });
+
+  it('uses a pre-set clock env var value as the logical date (plan 8.2 job-start date)', async () => {
+    vi.stubEnv('VISUAL_TEST_DATE', '2026-07-16');
+    const code = await runCli(['baseline', 'create']);
+    expect(code).toBe(0);
+
+    const buildEnv = vi.mocked(runBuild).mock.calls[0]![1];
+    expect(buildEnv['VISUAL_TEST_DATE']).toBe('2026-07-16');
+    expect(vi.mocked(startServer).mock.calls[0]![1]).toEqual(buildEnv);
+    expect(vi.mocked(captureRoutes).mock.calls[0]![0].logicalDate).toBe('2026-07-16');
+
+    const createOpts = vi.mocked(createBaseline).mock.calls[0]![0];
+    expect(createOpts.identity.logicalDate).toBe('2026-07-16');
+  });
+
+  it('accepts a pre-set full ISO-8601 UTC timestamp as the logical date', async () => {
+    vi.stubEnv('VISUAL_TEST_DATE', '2026-07-16T00:00:00.000Z');
+    const code = await runCli(['baseline', 'create']);
+    expect(code).toBe(0);
+    const createOpts = vi.mocked(createBaseline).mock.calls[0]![0];
+    expect(createOpts.identity.logicalDate).toBe('2026-07-16T00:00:00.000Z');
+  });
+
+  it('rejects an invalid pre-set clock env var value with CONFIG_INVALID before building', async () => {
+    vi.stubEnv('VISUAL_TEST_DATE', 'not-a-date');
+    const code = await runCli(['baseline', 'create']);
+    expect(code).toBe(1);
+    expect(runBuild).not.toHaveBeenCalled();
+
+    const result = vi.mocked(writeResult).mock.calls[0]![1];
+    expect(result.status).toBe('infrastructure-error');
+    expect(result.errors[0]!.code).toBe('CONFIG_INVALID');
+    expect(result.errors[0]!.message).toContain('VISUAL_TEST_DATE');
   });
 
   it('writes a schema-shaped pass result', async () => {

@@ -89,6 +89,26 @@ function killGroup(child: ChildProcess, signal: NodeJS.Signals): void {
   }
 }
 
+/**
+ * Guard a child process group against SIGINT/SIGTERM delivered to this
+ * process: SIGKILL the group, remove the handlers, and re-raise the signal.
+ * Returns a function that removes the handlers once the child is done.
+ */
+function installSignalGuard(child: ChildProcess): () => void {
+  const onSignal = (signal: NodeJS.Signals): void => {
+    removeSignalHandlers();
+    killGroup(child, 'SIGKILL');
+    process.kill(process.pid, signal);
+  };
+  const removeSignalHandlers = (): void => {
+    process.removeListener('SIGINT', onSignal);
+    process.removeListener('SIGTERM', onSignal);
+  };
+  process.on('SIGINT', onSignal);
+  process.on('SIGTERM', onSignal);
+  return removeSignalHandlers;
+}
+
 function describeExit(exit: ChildExit): string {
   if (exit.spawnError !== undefined) return 'could not be spawned';
   if (exit.signal !== null) return `was killed by signal ${exit.signal}`;
@@ -138,6 +158,8 @@ function readinessUrl(config: ResolvedVisualConfig): URL {
 /**
  * Run config.commands.build in config.repoRoot with `env` merged over the
  * process env. Streams output to stderr. Non-zero exit -> BUILD_FAILED.
+ * SIGINT/SIGTERM while the build runs kill the build process group before
+ * the signal is re-raised.
  */
 export async function runBuild(
   config: ResolvedVisualConfig,
@@ -147,7 +169,13 @@ export async function runBuild(
   const { exited } = watchChild(child);
   prefixLines(child.stdout, '[build] ');
   prefixLines(child.stderr, '[build] ');
-  const exit = await exited;
+  const removeSignalHandlers = installSignalGuard(child);
+  let exit: ChildExit;
+  try {
+    exit = await exited;
+  } finally {
+    removeSignalHandlers();
+  }
   if (exit.code !== 0) {
     throw new VisualRegressionError('BUILD_FAILED', `Build command ${describeExit(exit)}`, {
       context: { command: config.commands.build, ...exitContext(exit) },
@@ -172,17 +200,7 @@ export async function startServer(
   prefixLines(child.stdout, '[server] ');
   prefixLines(child.stderr, '[server] ');
 
-  const onSignal = (signal: NodeJS.Signals): void => {
-    removeSignalHandlers();
-    killGroup(child, 'SIGKILL');
-    process.kill(process.pid, signal);
-  };
-  const removeSignalHandlers = (): void => {
-    process.removeListener('SIGINT', onSignal);
-    process.removeListener('SIGTERM', onSignal);
-  };
-  process.on('SIGINT', onSignal);
-  process.on('SIGTERM', onSignal);
+  const removeSignalHandlers = installSignalGuard(child);
 
   const fail = async (error: VisualRegressionError): Promise<never> => {
     removeSignalHandlers();
