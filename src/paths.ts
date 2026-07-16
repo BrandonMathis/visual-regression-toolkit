@@ -14,3 +14,8 @@ export const TEST_RESULTS_DIR = 'test-results/visual';
 /** File and directory names inside a baseline artifact. */
 export const MANIFEST_NAME = 'baseline-manifest.json';
 export const SCREENSHOTS_DIRNAME = 'screenshots';
+
+/** Sub-directory of CANDIDATE_DIR holding captured screenshots. */
+export const CANDIDATE_SCREENSHOTS_DIR = `${CANDIDATE_DIR}/screenshots`;
+/** Sub-directory name inside RESULT_DIR holding diff PNGs. */
+export const DIFFS_DIRNAME = 'diffs';

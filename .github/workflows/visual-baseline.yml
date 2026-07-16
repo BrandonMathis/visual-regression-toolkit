@@ -1,0 +1,202 @@
+# Reusable baseline publication workflow (plan Phase 5, sections 8, 11, 12).
+# Consumers call this by full commit SHA:
+#   uses: BrandonMathis/visual-regression-toolkit/.github/workflows/visual-baseline.yml@<full-sha>
+name: Visual Baseline (Reusable)
+
+on:
+  workflow_call:
+    inputs:
+      config-path:
+        description: 'Path to the visual regression config file in the caller repository.'
+        type: string
+        required: false
+        default: 'visual-regression.config.ts'
+      node-version:
+        description: 'Node.js major version expected by the toolkit (informational; the pinned container provides the runtime).'
+        type: string
+        required: false
+        default: '22'
+      retention-days:
+        description: 'Retention in days for the published baseline artifact.'
+        type: number
+        required: false
+        default: 90
+
+permissions:
+  contents: read
+
+jobs:
+  baseline:
+    name: Publish visual baseline
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # Newer pushes must NOT cancel a baseline publication that an open PR may
+    # need for its base SHA (plan Phase 5).
+    concurrency:
+      group: visual-baseline-${{ github.workflow }}-${{ github.sha }}
+      cancel-in-progress: false
+    container:
+      # Pinned Playwright runtime; Node inside this image is the toolchain.
+      image: mcr.microsoft.com/playwright:v1.61.1-noble@sha256:5b8f294aff9041b7191c34a4bab3ac270157a28774d4b0660e9743297b697e48
+    env:
+      # Exact package version paired with this workflow commit (plan section 12).
+      EXPECTED_TOOLKIT_VERSION: '1.0.0'
+      TOOLKIT_PACKAGE_NAME: '@thisdot/visual-regression'
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Check out caller repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Verify toolkit version pin
+        run: |
+          set -euo pipefail
+          node --input-type=module - <<'SCRIPT'
+          import { readFileSync } from 'node:fs';
+          const name = process.env.TOOLKIT_PACKAGE_NAME;
+          const expected = process.env.EXPECTED_TOOLKIT_VERSION;
+          const fail = (message) => {
+            console.error(`TOOLKIT_VERSION_MISMATCH: ${message}`);
+            process.exit(1);
+          };
+          let pkg;
+          try {
+            pkg = JSON.parse(readFileSync('package.json', 'utf8'));
+          } catch {
+            fail('package.json is missing or unreadable in the caller repository');
+          }
+          const declared = [pkg.devDependencies?.[name], pkg.dependencies?.[name]].filter(
+            (v) => v !== undefined,
+          );
+          if (declared.length === 0) {
+            fail(`package.json does not declare ${name}; pin it to exactly ${expected}`);
+          }
+          for (const version of declared) {
+            if (version !== expected) {
+              fail(`package.json pins ${name} to "${version}", expected exactly "${expected}"`);
+            }
+          }
+          let lock;
+          try {
+            lock = JSON.parse(readFileSync('package-lock.json', 'utf8'));
+          } catch {
+            fail('package-lock.json is missing or unreadable; commit an npm lockfile');
+          }
+          const resolved = [];
+          for (const [key, entry] of Object.entries(lock.packages ?? {})) {
+            if (key === `node_modules/${name}` || key.endsWith(`/node_modules/${name}`)) {
+              resolved.push(entry?.version);
+            }
+          }
+          if (lock.dependencies?.[name]?.version !== undefined) {
+            resolved.push(lock.dependencies[name].version);
+          }
+          if (resolved.length === 0) {
+            fail(`package-lock.json does not resolve ${name}; run npm install --save-exact`);
+          }
+          for (const version of resolved) {
+            if (version !== expected) {
+              fail(
+                `package-lock.json resolves ${name} to "${version}", expected exactly "${expected}"`,
+              );
+            }
+          }
+          console.log(`Toolkit version OK: ${name}@${expected}`);
+          SCRIPT
+
+      # One SHA and one logical date, resolved at job start (plan section 8.2).
+      - name: Resolve source identity and logical date
+        id: identity
+        run: |
+          set -euo pipefail
+          logical_date="$(date -u +%Y-%m-%d)"
+          {
+            echo "sha=${GITHUB_SHA}"
+            echo "sha12=${GITHUB_SHA:0:12}"
+            echo "logical-date=${logical_date}"
+          } >> "$GITHUB_OUTPUT"
+          # Default clock variable (plan section 8.2); the CLI injects the
+          # logical date into the configured clock variable for build, start,
+          # and capture, and this keeps every step of this job on one date.
+          echo "VISUAL_TEST_DATE=${logical_date}" >> "$GITHUB_ENV"
+          echo "Source SHA: ${GITHUB_SHA}"
+          echo "Logical date: ${logical_date}"
+
+      - name: Install dependencies
+        run: |
+          set -euo pipefail
+          npm ci
+
+      - name: Compute visual-contract hash
+        id: confighash
+        env:
+          CONFIG_PATH: ${{ inputs.config-path }}
+        run: |
+          set -euo pipefail
+          hash="$(npx visual-regression config hash --config "$CONFIG_PATH")"
+          if ! [[ "$hash" =~ ^[0-9a-f]{16,}$ ]]; then
+            echo "Unexpected visual-contract hash output" >&2
+            exit 1
+          fi
+          {
+            echo "hash=${hash}"
+            echo "hash12=${hash:0:12}"
+          } >> "$GITHUB_OUTPUT"
+          echo "Visual-contract hash: ${hash}"
+
+      - name: Create baseline
+        env:
+          CONFIG_PATH: ${{ inputs.config-path }}
+        run: |
+          set -euo pipefail
+          npx visual-regression baseline create --config "$CONFIG_PATH" --json
+
+      # Separate process: the manifest and checksums must verify independently
+      # of the process that produced them (plan section 8.2).
+      - name: Verify baseline
+        run: |
+          set -euo pipefail
+          npx visual-regression baseline verify .visual-regression/baseline
+
+      # The job reports success only after this immutable upload succeeds
+      # (plan section 10); any later step failure still fails the job.
+      - name: Upload baseline artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: visual-baseline-${{ steps.identity.outputs.sha12 }}-${{ steps.confighash.outputs.hash12 }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .visual-regression/baseline/**
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: ${{ inputs.retention-days }}
+
+      - name: Write job summary
+        env:
+          SOURCE_SHA: ${{ steps.identity.outputs.sha }}
+          CONTRACT_HASH: ${{ steps.confighash.outputs.hash }}
+          LOGICAL_DATE: ${{ steps.identity.outputs.logical-date }}
+        run: |
+          set -euo pipefail
+          counts="$(node --input-type=module - <<'SCRIPT'
+          import { readFileSync } from 'node:fs';
+          const result = JSON.parse(
+            readFileSync('.visual-regression/result/visual-result.json', 'utf8'),
+          );
+          console.log(`${result.totals.routes} routes | ${result.totals.screenshots} screenshots`);
+          SCRIPT
+          )"
+          {
+            echo '## Visual baseline published'
+            echo ''
+            echo "- Source SHA: \`${SOURCE_SHA}\`"
+            echo "- Visual-contract hash: \`${CONTRACT_HASH}\`"
+            echo "- Logical date: \`${LOGICAL_DATE}\`"
+            echo "- Totals: ${counts}"
+            echo ''
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ -f .visual-regression/result/visual-summary.md ]; then
+            head -c 65536 .visual-regression/result/visual-summary.md >> "$GITHUB_STEP_SUMMARY"
+            echo '' >> "$GITHUB_STEP_SUMMARY"
+          fi

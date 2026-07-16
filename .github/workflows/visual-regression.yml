@@ -1,0 +1,455 @@
+# Reusable pull-request comparison workflow (plan Phase 5, sections 9-12, 14).
+# Consumers call this by full commit SHA:
+#   uses: BrandonMathis/visual-regression-toolkit/.github/workflows/visual-regression.yml@<full-sha>
+name: Visual Regression (Reusable)
+
+on:
+  workflow_call:
+    inputs:
+      config-path:
+        description: 'Path to the visual regression config file in the caller repository.'
+        type: string
+        required: false
+        default: 'visual-regression.config.ts'
+      baseline-workflow-file:
+        description: 'File name of the caller workflow that publishes baselines.'
+        type: string
+        required: false
+        default: 'visual-baseline.yml'
+      node-version:
+        description: 'Node.js major version expected by the toolkit (informational; the pinned container provides the runtime).'
+        type: string
+        required: false
+        default: '22'
+      visual-diffs-are-informational:
+        description: 'When true, a schema-valid visual-diff result is converted to an advisory success.'
+        type: boolean
+        required: false
+        default: true
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  compare:
+    name: Compare against baseline
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    container:
+      # Pinned Playwright runtime; Node inside this image is the toolchain.
+      image: mcr.microsoft.com/playwright:v1.61.1-noble@sha256:5b8f294aff9041b7191c34a4bab3ac270157a28774d4b0660e9743297b697e48
+    env:
+      # Exact package version paired with this workflow commit (plan section 12).
+      EXPECTED_TOOLKIT_VERSION: '1.0.0'
+      TOOLKIT_PACKAGE_NAME: '@thisdot/visual-regression'
+      # Baseline download lands OUTSIDE the generated .visual-regression/ tree.
+      BASELINE_DOWNLOAD_DIR: '.visual-baseline-download'
+    defaults:
+      run:
+        shell: bash
+    steps:
+      # Default pull_request checkout: the PR merge ref.
+      - name: Check out pull request merge ref
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Verify toolkit version pin
+        run: |
+          set -euo pipefail
+          node --input-type=module - <<'SCRIPT'
+          import { readFileSync } from 'node:fs';
+          const name = process.env.TOOLKIT_PACKAGE_NAME;
+          const expected = process.env.EXPECTED_TOOLKIT_VERSION;
+          const fail = (message) => {
+            console.error(`TOOLKIT_VERSION_MISMATCH: ${message}`);
+            process.exit(1);
+          };
+          let pkg;
+          try {
+            pkg = JSON.parse(readFileSync('package.json', 'utf8'));
+          } catch {
+            fail('package.json is missing or unreadable in the caller repository');
+          }
+          const declared = [pkg.devDependencies?.[name], pkg.dependencies?.[name]].filter(
+            (v) => v !== undefined,
+          );
+          if (declared.length === 0) {
+            fail(`package.json does not declare ${name}; pin it to exactly ${expected}`);
+          }
+          for (const version of declared) {
+            if (version !== expected) {
+              fail(`package.json pins ${name} to "${version}", expected exactly "${expected}"`);
+            }
+          }
+          let lock;
+          try {
+            lock = JSON.parse(readFileSync('package-lock.json', 'utf8'));
+          } catch {
+            fail('package-lock.json is missing or unreadable; commit an npm lockfile');
+          }
+          const resolved = [];
+          for (const [key, entry] of Object.entries(lock.packages ?? {})) {
+            if (key === `node_modules/${name}` || key.endsWith(`/node_modules/${name}`)) {
+              resolved.push(entry?.version);
+            }
+          }
+          if (lock.dependencies?.[name]?.version !== undefined) {
+            resolved.push(lock.dependencies[name].version);
+          }
+          if (resolved.length === 0) {
+            fail(`package-lock.json does not resolve ${name}; run npm install --save-exact`);
+          }
+          for (const version of resolved) {
+            if (version !== expected) {
+              fail(
+                `package-lock.json resolves ${name} to "${version}", expected exactly "${expected}"`,
+              );
+            }
+          }
+          console.log(`Toolkit version OK: ${name}@${expected}`);
+          SCRIPT
+
+      - name: Install dependencies
+        run: |
+          set -euo pipefail
+          npm ci
+
+      # Read the base SHA exactly once at job start (plan section 9).
+      - name: Resolve pull request identity
+        id: identity
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          if [ -z "$BASE_SHA" ] || [ -z "$HEAD_SHA" ]; then
+            echo 'This reusable workflow must be called from a pull_request event' >&2
+            exit 1
+          fi
+          {
+            echo "base-sha=${BASE_SHA}"
+            echo "base-sha12=${BASE_SHA:0:12}"
+            echo "head-sha=${HEAD_SHA}"
+            echo "merge-sha=${GITHUB_SHA}"
+          } >> "$GITHUB_OUTPUT"
+          echo "Base SHA: ${BASE_SHA}"
+          echo "Head SHA: ${HEAD_SHA}"
+          echo "Merge SHA: ${GITHUB_SHA}"
+
+      - name: Compute candidate visual-contract hash
+        id: confighash
+        env:
+          CONFIG_PATH: ${{ inputs.config-path }}
+        run: |
+          set -euo pipefail
+          hash="$(npx visual-regression config hash --config "$CONFIG_PATH")"
+          if ! [[ "$hash" =~ ^[0-9a-f]{16,}$ ]]; then
+            echo "Unexpected visual-contract hash output" >&2
+            exit 1
+          fi
+          {
+            echo "hash=${hash}"
+            echo "hash12=${hash:0:12}"
+          } >> "$GITHUB_OUTPUT"
+          echo "Candidate visual-contract hash: ${hash}"
+
+      # Plan section 9: exact base-SHA lookup, deterministic selection,
+      # bounded waiting, and distinct stable failure codes.
+      - name: Resolve baseline artifact
+        id: resolve
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          BASE_SHA: ${{ steps.identity.outputs.base-sha }}
+          BASE_SHA12: ${{ steps.identity.outputs.base-sha12 }}
+          CANDIDATE_HASH12: ${{ steps.confighash.outputs.hash12 }}
+          BASELINE_WORKFLOW_FILE: ${{ inputs.baseline-workflow-file }}
+        with:
+          script: |
+            const baseSha = process.env.BASE_SHA;
+            const baseSha12 = process.env.BASE_SHA12;
+            const candidateHash12 = process.env.CANDIDATE_HASH12;
+            const workflowFile = process.env.BASELINE_WORKFLOW_FILE;
+            const prefix = `visual-baseline-${baseSha12}-`;
+            const pollBudgetMs = 10 * 60 * 1000;
+            const pollIntervalMs = 30 * 1000;
+
+            const listRuns = async (status) =>
+              await github.paginate(github.rest.actions.listWorkflowRuns, {
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                workflow_id: workflowFile,
+                head_sha: baseSha,
+                status,
+                per_page: 100,
+              });
+
+            // Artifact name contract (plan section 8.1):
+            //   visual-baseline-<sha12>-<confighash12>-<run_id>-<run_attempt>
+            const parseName = (name) => {
+              const match = name.match(
+                /^visual-baseline-([0-9a-f]{12})-([0-9a-f]{12})-(\d+)-(\d+)$/,
+              );
+              if (match === null) return null;
+              return {
+                sha12: match[1],
+                hash12: match[2],
+                runId: Number(match[3]),
+                runAttempt: Number(match[4]),
+              };
+            };
+
+            const collectCandidates = async () => {
+              const runs = await listRuns('success');
+              const candidates = [];
+              for (const run of runs) {
+                const artifacts = await github.paginate(
+                  github.rest.actions.listWorkflowRunArtifacts,
+                  {
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    run_id: run.id,
+                    per_page: 100,
+                  },
+                );
+                for (const artifact of artifacts) {
+                  if (!artifact.name.startsWith(prefix)) continue;
+                  const parsed = parseName(artifact.name);
+                  if (parsed === null) continue;
+                  candidates.push({ artifact, parsed, runId: run.id });
+                }
+              }
+              return candidates;
+            };
+
+            const failWithSummary = async (code, message, extra) => {
+              core.summary.addHeading(`Visual regression: ${code}`, 2);
+              core.summary.addRaw(`\n${message}\n`);
+              if (extra) core.summary.addRaw(`\n${extra}\n`);
+              await core.summary.write();
+              core.setFailed(`${code}: ${message}`);
+            };
+
+            const select = (candidates) => {
+              // Deterministic: highest run id, then highest run attempt.
+              return [...candidates].sort(
+                (a, b) =>
+                  b.parsed.runId - a.parsed.runId || b.parsed.runAttempt - a.parsed.runAttempt,
+              )[0];
+            };
+
+            const deadline = Date.now() + pollBudgetMs;
+            let waited = false;
+            for (;;) {
+              const candidates = await collectCandidates();
+              const matching = candidates.filter((c) => c.parsed.hash12 === candidateHash12);
+              if (matching.length > 0) {
+                const usable = matching.filter((c) => c.artifact.expired !== true);
+                if (usable.length === 0) {
+                  await failWithSummary(
+                    'BASELINE_NOT_FOUND',
+                    `Every baseline artifact for base SHA ${baseSha} has expired.`,
+                    'Publish a fresh baseline for the base commit (push, schedule, or ' +
+                      'manual dispatch of the baseline workflow), then re-run this check.',
+                  );
+                  return;
+                }
+                const chosen = select(usable);
+                core.info(
+                  `Selected baseline artifact ${chosen.artifact.name} ` +
+                    `(artifact id ${chosen.artifact.id}, run ${chosen.parsed.runId}, ` +
+                    `attempt ${chosen.parsed.runAttempt})`,
+                );
+                core.setOutput('artifact-name', chosen.artifact.name);
+                core.setOutput('artifact-id', String(chosen.artifact.id));
+                core.setOutput('run-id', String(chosen.parsed.runId));
+                return;
+              }
+              if (candidates.length > 0) {
+                // A baseline exists for this exact base SHA, but under a
+                // different visual-contract hash (plan sections 3 and 9).
+                await failWithSummary(
+                  'VISUAL_CONTRACT_CHANGED',
+                  `A baseline exists for base SHA ${baseSha}, but its visual-contract hash ` +
+                    `does not match this pull request's hash (${candidateHash12}...). ` +
+                    'This pull request changes the visual contract, so the existing ' +
+                    'baseline cannot be used.',
+                  'Rollout for config-changing pull requests: review the configuration ' +
+                    'change, merge with an explicit check waiver, let the baseline ' +
+                    'workflow publish a baseline from the resulting default-branch ' +
+                    'commit, and then normal comparisons resume. Version 1 never ' +
+                    'synthesizes an ephemeral baseline for a new contract.',
+                );
+                return;
+              }
+              const active = [...(await listRuns('queued')), ...(await listRuns('in_progress'))];
+              if (active.length > 0 && Date.now() < deadline) {
+                waited = true;
+                core.info(
+                  `Baseline publication for ${baseSha} is active ` +
+                    `(${active.length} run(s)); waiting ${pollIntervalMs / 1000}s...`,
+                );
+                await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+                continue;
+              }
+              if (active.length > 0) {
+                await failWithSummary(
+                  'BASELINE_NOT_READY',
+                  `Baseline publication for base SHA ${baseSha} was still running after ` +
+                    'waiting 10 minutes.',
+                  'Re-run this check once the baseline workflow for the base commit finishes.',
+                );
+                return;
+              }
+              await failWithSummary(
+                'BASELINE_NOT_FOUND',
+                `No successful ${workflowFile} run with a baseline artifact exists for ` +
+                  `base SHA ${baseSha}${waited ? ' (after waiting for active runs)' : ''}.`,
+                'Publish a baseline for the base commit (push, schedule, or manual ' +
+                  'dispatch of the baseline workflow), then re-run this check.',
+              );
+              return;
+            }
+
+      # Downloaded outside .visual-regression/ so result directories never
+      # contain the untrusted download (plan section 9).
+      - name: Download baseline artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ${{ steps.resolve.outputs.artifact-name }}
+          run-id: ${{ steps.resolve.outputs.run-id }}
+          github-token: ${{ github.token }}
+          path: .visual-baseline-download
+
+      - name: Verify downloaded baseline
+        run: |
+          set -euo pipefail
+          npx visual-regression baseline verify "$BASELINE_DOWNLOAD_DIR" --json
+
+      # Exit code captured deliberately; the CLI enforces contract-hash and
+      # runtime compatibility and reuses the baseline's logical date.
+      - name: Compare candidate against baseline
+        id: compare
+        env:
+          CONFIG_PATH: ${{ inputs.config-path }}
+          BASE_SHA: ${{ steps.identity.outputs.base-sha }}
+        run: |
+          set -uo pipefail
+          set +e
+          npx visual-regression compare \
+            --baseline "$BASELINE_DOWNLOAD_DIR" \
+            --config "$CONFIG_PATH" \
+            --expect-base-sha "$BASE_SHA" \
+            --expect-repository "$GITHUB_REPOSITORY" \
+            --json
+          code=$?
+          set -e
+          echo "exit-code=${code}" >> "$GITHUB_OUTPUT"
+          echo "Compare exited with code ${code}"
+
+      - name: Upload comparison artifacts
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: visual-regression-${{ steps.identity.outputs.base-sha12 || github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            .visual-regression/result/**
+            .visual-regression/candidate/**
+            playwright-report/visual/**
+            test-results/visual/**
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Append visual summary
+        if: always()
+        run: |
+          set -euo pipefail
+          if [ -f .visual-regression/result/visual-summary.md ]; then
+            head -c 65536 .visual-regression/result/visual-summary.md >> "$GITHUB_STEP_SUMMARY"
+            echo '' >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo 'No visual summary was produced.' >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      # Exit 0 -> pass. Exit 2 -> advisory success ONLY after the result JSON
+      # validates completely (plan sections 10 and 14); a malformed or
+      # oversized result must never convert to advisory success. Anything
+      # else -> fail with the stable error code from the result when readable.
+      - name: Classify result
+        env:
+          COMPARE_EXIT_CODE: ${{ steps.compare.outputs.exit-code }}
+          INFORMATIONAL: ${{ inputs.visual-diffs-are-informational }}
+          BASE_SHA: ${{ steps.identity.outputs.base-sha }}
+          HEAD_SHA: ${{ steps.identity.outputs.head-sha }}
+          MERGE_SHA: ${{ steps.identity.outputs.merge-sha }}
+        run: |
+          set -euo pipefail
+          node --input-type=module - <<'SCRIPT'
+          import { readFileSync, statSync } from 'node:fs';
+          const resultPath = '.visual-regression/result/visual-result.json';
+          const maxResultBytes = 2 * 1024 * 1024;
+          const exitCode = process.env.COMPARE_EXIT_CODE;
+          const informational = process.env.INFORMATIONAL === 'true';
+          const fail = (message) => {
+            console.error(message);
+            process.exit(1);
+          };
+          const readResult = () => {
+            let size;
+            try {
+              size = statSync(resultPath).size;
+            } catch {
+              return { error: `missing result file ${resultPath}` };
+            }
+            if (size >= maxResultBytes) {
+              return { error: `result file is ${size} bytes (limit ${maxResultBytes})` };
+            }
+            try {
+              return { result: JSON.parse(readFileSync(resultPath, 'utf8')) };
+            } catch {
+              return { error: 'result file is not valid JSON' };
+            }
+          };
+          if (exitCode === '0') {
+            console.log('Visual comparison passed with no differences.');
+            process.exit(0);
+          }
+          if (exitCode === '2') {
+            const { result, error } = readResult();
+            if (error !== undefined) fail(`RESULT_INVALID: exit code 2 but ${error}`);
+            const problems = [];
+            if (result.operation !== 'compare') {
+              problems.push(`operation is "${result.operation}", expected "compare"`);
+            }
+            if (result.status !== 'visual-diff') {
+              problems.push(`status is "${result.status}", expected "visual-diff"`);
+            }
+            // The checkout is the PR merge ref, so the CLI records the merge
+            // commit as the candidate; the PR head SHA is also accepted.
+            const allowedShas = [process.env.MERGE_SHA, process.env.HEAD_SHA];
+            if (!allowedShas.includes(result.candidateSha)) {
+              problems.push(`candidateSha "${result.candidateSha}" matches neither merge nor head SHA`);
+            }
+            if (result.baseline?.sourceSha !== process.env.BASE_SHA) {
+              problems.push(`baseline.sourceSha "${result.baseline?.sourceSha}" is not the base SHA`);
+            }
+            if (problems.length > 0) {
+              fail(`RESULT_INVALID: visual-diff result failed validation: ${problems.join('; ')}`);
+            }
+            if (informational) {
+              console.log(
+                '::notice title=Visual differences::Validated visual differences found; ' +
+                  'informational mode converts this to an advisory success. ' +
+                  'Review the job summary and downloaded artifacts.',
+              );
+              process.exit(0);
+            }
+            fail('Visual differences found and visual-diffs-are-informational is false.');
+          }
+          const { result } = readResult();
+          const code = result?.errors?.[0]?.code ?? 'INTERNAL_ERROR';
+          const message = result?.errors?.[0]?.message ?? 'no readable result error message';
+          fail(`Visual comparison failed (exit ${exitCode ?? 'unknown'}) with ${code}: ${message}`);
+          SCRIPT

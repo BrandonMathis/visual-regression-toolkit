@@ -1,0 +1,68 @@
+{
+  "version": 3,
+  "routes": {
+    "/": {
+      "initialRevalidateSeconds": false,
+      "srcRoute": null,
+      "dataRoute": "/_next/data/build-id/index.json"
+    },
+    "/about": {
+      "initialRevalidateSeconds": false,
+      "srcRoute": null,
+      "dataRoute": "/_next/data/build-id/about.json"
+    },
+    "/blog/first-post": {
+      "initialRevalidateSeconds": 60,
+      "srcRoute": "/blog/[slug]",
+      "dataRoute": "/_next/data/build-id/blog/first-post.json"
+    },
+    "/blog/second-post": {
+      "initialRevalidateSeconds": 60,
+      "srcRoute": "/blog/[slug]",
+      "dataRoute": "/_next/data/build-id/blog/second-post.json"
+    },
+    "/404": {
+      "initialRevalidateSeconds": false,
+      "srcRoute": null,
+      "dataRoute": "/_next/data/build-id/404.json"
+    },
+    "/500": {
+      "initialRevalidateSeconds": false,
+      "srcRoute": null,
+      "dataRoute": "/_next/data/build-id/500.json"
+    },
+    "/_internal/debug": {
+      "initialRevalidateSeconds": false,
+      "srcRoute": null,
+      "dataRoute": "/_next/data/build-id/_internal/debug.json"
+    },
+    "/favicon.ico": {
+      "initialRevalidateSeconds": false,
+      "srcRoute": null,
+      "dataRoute": null
+    },
+    "/robots.txt": {
+      "initialRevalidateSeconds": false,
+      "srcRoute": null,
+      "dataRoute": null
+    },
+    "/sitemap.xml": {
+      "initialRevalidateSeconds": false,
+      "srcRoute": null,
+      "dataRoute": null
+    }
+  },
+  "dynamicRoutes": {
+    "/blog/[slug]": {
+      "routeRegex": "^/blog/([^/]+?)$",
+      "dataRoute": "/_next/data/build-id/blog/[slug].json",
+      "fallback": false
+    }
+  },
+  "notFoundRoutes": [],
+  "preview": {
+    "previewModeId": "0000000000000000000000000000000000000000",
+    "previewModeSigningKey": "0000000000000000000000000000000000000000",
+    "previewModeEncryptionKey": "0000000000000000000000000000000000000000"
+  }
+}

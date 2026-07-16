@@ -118,8 +118,22 @@ export interface ResolvedVisualConfig {
 }
 
 export const DEFAULT_PROJECTS: ResolvedProject[] = [
-  { name: 'desktop', width: 1440, height: 900, deviceScaleFactor: 1, hasTouch: false, isMobile: false },
-  { name: 'tablet', width: 768, height: 1024, deviceScaleFactor: 1, hasTouch: true, isMobile: false },
+  {
+    name: 'desktop',
+    width: 1440,
+    height: 900,
+    deviceScaleFactor: 1,
+    hasTouch: false,
+    isMobile: false,
+  },
+  {
+    name: 'tablet',
+    width: 768,
+    height: 1024,
+    deviceScaleFactor: 1,
+    hasTouch: true,
+    isMobile: false,
+  },
   { name: 'phone', width: 375, height: 812, deviceScaleFactor: 1, hasTouch: true, isMobile: true },
 ];
 

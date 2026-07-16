@@ -17,6 +17,13 @@
     "outDir": "dist",
     "types": ["node"]
   },
-  "include": ["src", "tests/unit", "tests/integration", "tests/e2e", "vitest.config.ts", "eslint.config.js"],
+  "include": [
+    "src",
+    "tests/unit",
+    "tests/integration",
+    "tests/e2e",
+    "vitest.config.ts",
+    "eslint.config.js"
+  ],
   "exclude": ["tests/fixtures"]
 }

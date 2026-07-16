@@ -1,0 +1,215 @@
+# Release coupling (plan section 12): one immutable tag binds the exact npm
+# package version, this workflow commit SHA, Node major, Playwright/Chromium
+# identity, container digest, and schema versions.
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+env:
+  NODE_MAJOR: '22'
+  PLAYWRIGHT_VERSION: '1.61.1'
+  CHROMIUM_REVISION: '1228'
+  CHROMIUM_VERSION: '149.0.7827.55'
+  CONTAINER_IMAGE: 'mcr.microsoft.com/playwright:v1.61.1-noble'
+  CONTAINER_DIGEST: 'sha256:5b8f294aff9041b7191c34a4bab3ac270157a28774d4b0660e9743297b697e48'
+  CONTAINER_PLATFORM: 'linux/amd64'
+  BASELINE_MANIFEST_SCHEMA_VERSION: '1'
+  VISUAL_RESULT_SCHEMA_VERSION: '1'
+
+jobs:
+  verify:
+    name: Verify release
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22'
+          # No caching in the release workflow (cache-poisoning hardening).
+          package-manager-cache: false
+
+      - name: Verify tag matches package version
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          version="$(node -p "require('./package.json').version")"
+          if [ "$TAG" != "v${version}" ]; then
+            echo "Tag ${TAG} does not match package.json version ${version}" >&2
+            exit 1
+          fi
+
+      - name: Install dependencies
+        run: |
+          set -euo pipefail
+          npm ci
+
+      - name: Check formatting
+        run: |
+          set -euo pipefail
+          npm run format:check
+
+      - name: Lint
+        run: |
+          set -euo pipefail
+          npm run lint
+
+      - name: Typecheck
+        run: |
+          set -euo pipefail
+          npm run typecheck
+
+      - name: Unit tests
+        run: |
+          set -euo pipefail
+          npm test
+
+      - name: Build
+        run: |
+          set -euo pipefail
+          npm run build
+
+      - name: Verify package contents
+        run: |
+          set -euo pipefail
+          npm pack --dry-run
+
+  integration:
+    name: Integration tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    container:
+      image: mcr.microsoft.com/playwright:v1.61.1-noble@sha256:5b8f294aff9041b7191c34a4bab3ac270157a28774d4b0660e9743297b697e48
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Install dependencies
+        run: |
+          set -euo pipefail
+          npm ci
+
+      - name: Integration tests
+        run: |
+          set -euo pipefail
+          npm run test:integration
+
+  publish:
+    name: Publish to npm
+    needs: [verify, integration]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      # npm trusted publishing (OIDC, provenance); no npm token secret exists.
+      id-token: write
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22'
+          registry-url: 'https://registry.npmjs.org'
+          # No caching in the release workflow (cache-poisoning hardening).
+          package-manager-cache: false
+
+      # Trusted publishing requires npm >= 11.5.1; Node 22 bundles npm 10.
+      - name: Update npm for trusted publishing
+        run: |
+          set -euo pipefail
+          npm install -g npm@11
+          npm --version
+
+      - name: Install dependencies
+        run: |
+          set -euo pipefail
+          npm ci
+
+      - name: Build
+        run: |
+          set -euo pipefail
+          npm run build
+
+      - name: Publish with provenance
+        run: |
+          set -euo pipefail
+          npm publish --provenance --access public
+
+  release:
+    name: Create GitHub release
+    needs: [publish]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+          WORKFLOW_SHA: ${{ github.sha }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          version="${TAG#v}"
+          notes_file="$(mktemp)"
+          cat > "$notes_file" <<EOF
+          ## @thisdot/visual-regression ${version}
+
+          This release couples the package, reusable workflows, and runtime
+          identity. Consumers must upgrade the exact package version and the
+          workflow commit SHA together (plan section 12).
+
+          | Component | Value |
+          |---|---|
+          | npm package | \`@thisdot/visual-regression@${version}\` |
+          | Reusable workflow commit SHA | \`${WORKFLOW_SHA}\` |
+          | Node major | ${NODE_MAJOR} |
+          | Playwright | ${PLAYWRIGHT_VERSION} |
+          | Chromium | revision ${CHROMIUM_REVISION} (${CHROMIUM_VERSION}) |
+          | Container | \`${CONTAINER_IMAGE}@${CONTAINER_DIGEST}\` (${CONTAINER_PLATFORM}) |
+          | Baseline manifest schema | ${BASELINE_MANIFEST_SCHEMA_VERSION} |
+          | Visual result schema | ${VISUAL_RESULT_SCHEMA_VERSION} |
+
+          Reference the reusable workflows by this commit SHA:
+
+          \`\`\`yaml
+          uses: ${REPOSITORY}/.github/workflows/visual-baseline.yml@${WORKFLOW_SHA}
+          uses: ${REPOSITORY}/.github/workflows/visual-regression.yml@${WORKFLOW_SHA}
+          \`\`\`
+          EOF
+          gh release create "$TAG" \
+            --repo "$REPOSITORY" \
+            --verify-tag \
+            --title "@thisdot/visual-regression ${version}" \
+            --notes-file "$notes_file"

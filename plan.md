@@ -212,7 +212,7 @@ Default projects:
   { name: 'desktop', width: 1440, height: 900 },
   { name: 'tablet', width: 768, height: 1024, hasTouch: true },
   { name: 'phone', width: 375, height: 812, hasTouch: true, isMobile: true },
-]
+];
 ```
 
 Validation must:
@@ -255,12 +255,12 @@ Equivalent normalized configurations must produce the same hash. Any intentional
 
 Version 1 commands:
 
-| Command | Purpose |
-|---|---|
-| `visual-regression baseline create` | Build, start, discover, capture, create a complete manifest, and verify it. |
-| `visual-regression baseline verify <dir>` | Validate manifest identity, compatibility, paths, dimensions, and checksums. |
+| Command                                      | Purpose                                                                                                 |
+| -------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| `visual-regression baseline create`          | Build, start, discover, capture, create a complete manifest, and verify it.                             |
+| `visual-regression baseline verify <dir>`    | Validate manifest identity, compatibility, paths, dimensions, and checksums.                            |
 | `visual-regression compare --baseline <dir>` | Build and capture a candidate, verify the baseline, compare all route/project pairs, and write results. |
-| `visual-regression report` | Print or open the latest HTML report. |
+| `visual-regression report`                   | Print or open the latest HTML report.                                                                   |
 
 All commands support structured logging and a JSON-output mode where needed by workflows. Logs go to stderr when stdout is reserved for JSON.
 
@@ -410,11 +410,11 @@ Every operation writes a bounded, schema-validated `visual-result.json` with an 
 
 ### Status and exit codes
 
-| Status | Exit | Meaning |
-|---|---:|---|
-| `pass` | `0` | `baseline-create` produced a complete verified baseline, or `compare` completed with no differences. |
-| `infrastructure-error` | `1` | The requested operation could not complete or cannot be trusted. |
-| `visual-diff` | `2` | A complete, verified `compare` found changed, added, or removed route/project screenshots. |
+| Status                 | Exit | Meaning                                                                                              |
+| ---------------------- | ---: | ---------------------------------------------------------------------------------------------------- |
+| `pass`                 |  `0` | `baseline-create` produced a complete verified baseline, or `compare` completed with no differences. |
+| `infrastructure-error` |  `1` | The requested operation could not complete or cannot be trusted.                                     |
+| `visual-diff`          |  `2` | A complete, verified `compare` found changed, added, or removed route/project screenshots.           |
 
 `visual-diff` is valid only for `compare`. Exit `2` must never represent an incomplete comparison, missing baseline, or setup failure. A successful `baseline-create` means the artifact content is ready to publish; the workflow reports successful baseline publication only after the immutable artifact upload itself succeeds.
 
@@ -620,23 +620,23 @@ A Playwright, Chromium, container, stabilization-default, or other pixel-affecti
 
 ## 14. Validation matrix
 
-| Scenario | CLI result | Workflow behavior |
-|---|---|---|
+| Scenario                                   | CLI result                      | Workflow behavior                                            |
+| ------------------------------------------ | ------------------------------- | ------------------------------------------------------------ |
 | Complete baseline creation and publication | `baseline-create`: `pass` / `0` | Green only after immutable verified artifact upload succeeds |
-| Unchanged candidate | `pass` / `0` | Green |
-| Pixel difference | `visual-diff` / `2` | Advisory green; warning summary and report |
-| Added or removed route | `visual-diff` / `2` | Advisory green; route/project details |
-| Build or server failure | `infrastructure-error` / `1` | Red with stable error code |
-| Resource or capture timeout | `infrastructure-error` / `1` | Red with route/resource context |
-| Missing exact baseline | `infrastructure-error` / `1` | `BASELINE_NOT_FOUND` |
-| Active baseline exceeds wait | `infrastructure-error` / `1` | `BASELINE_NOT_READY` |
-| Corrupt manifest or screenshot | `infrastructure-error` / `1` | `BASELINE_CORRUPT` |
-| Wrong SHA/config/runtime | `infrastructure-error` / `1` | `BASELINE_INCOMPATIBLE` |
-| Changed visual contract | `infrastructure-error` / `1` | `VISUAL_CONTRACT_CHANGED` with rollout instructions |
-| Package/workflow mismatch | `infrastructure-error` / `1` | `TOOLKIT_VERSION_MISMATCH` before capture |
-| Newer baseline for another SHA | N/A | Exact artifact selected; wrong artifact ignored |
-| Malformed/oversized result | Rejected | Workflow fails; no advisory conversion |
-| Host execution | Diagnostic only | Never publishes an authoritative baseline |
+| Unchanged candidate                        | `pass` / `0`                    | Green                                                        |
+| Pixel difference                           | `visual-diff` / `2`             | Advisory green; warning summary and report                   |
+| Added or removed route                     | `visual-diff` / `2`             | Advisory green; route/project details                        |
+| Build or server failure                    | `infrastructure-error` / `1`    | Red with stable error code                                   |
+| Resource or capture timeout                | `infrastructure-error` / `1`    | Red with route/resource context                              |
+| Missing exact baseline                     | `infrastructure-error` / `1`    | `BASELINE_NOT_FOUND`                                         |
+| Active baseline exceeds wait               | `infrastructure-error` / `1`    | `BASELINE_NOT_READY`                                         |
+| Corrupt manifest or screenshot             | `infrastructure-error` / `1`    | `BASELINE_CORRUPT`                                           |
+| Wrong SHA/config/runtime                   | `infrastructure-error` / `1`    | `BASELINE_INCOMPATIBLE`                                      |
+| Changed visual contract                    | `infrastructure-error` / `1`    | `VISUAL_CONTRACT_CHANGED` with rollout instructions          |
+| Package/workflow mismatch                  | `infrastructure-error` / `1`    | `TOOLKIT_VERSION_MISMATCH` before capture                    |
+| Newer baseline for another SHA             | N/A                             | Exact artifact selected; wrong artifact ignored              |
+| Malformed/oversized result                 | Rejected                        | Workflow fails; no advisory conversion                       |
+| Host execution                             | Diagnostic only                 | Never publishes an authoritative baseline                    |
 
 Required repository checks:
 

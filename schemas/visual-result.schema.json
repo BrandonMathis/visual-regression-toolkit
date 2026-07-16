@@ -1,0 +1,134 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/thisdot/visual-regression-toolkit/schemas/visual-result.schema.json",
+  "title": "VisualResult",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "operation",
+    "status",
+    "createdAt",
+    "candidateSha",
+    "baseline",
+    "visualContractHash",
+    "runtime",
+    "totals",
+    "comparisons",
+    "errors",
+    "reports"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "operation": { "type": "string", "enum": ["baseline-create", "compare"] },
+    "status": { "type": "string", "enum": ["pass", "infrastructure-error", "visual-diff"] },
+    "createdAt": { "type": "string", "maxLength": 1000 },
+    "candidateSha": { "type": ["string", "null"], "maxLength": 1000 },
+    "baseline": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": [
+        "sourceSha",
+        "visualContractHash",
+        "toolkitVersion",
+        "playwrightVersion",
+        "chromiumRevision",
+        "containerDigest",
+        "platform"
+      ],
+      "properties": {
+        "sourceSha": { "type": "string", "maxLength": 1000 },
+        "visualContractHash": { "type": "string", "maxLength": 1000 },
+        "toolkitVersion": { "type": "string", "maxLength": 1000 },
+        "playwrightVersion": { "type": "string", "maxLength": 1000 },
+        "chromiumRevision": { "type": "string", "maxLength": 1000 },
+        "containerDigest": { "type": "string", "maxLength": 1000 },
+        "platform": { "type": "string", "maxLength": 1000 }
+      }
+    },
+    "visualContractHash": { "type": ["string", "null"], "maxLength": 1000 },
+    "runtime": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["toolkitVersion", "playwrightVersion", "chromiumRevision", "os", "arch", "host"],
+      "properties": {
+        "toolkitVersion": { "type": "string", "maxLength": 1000 },
+        "playwrightVersion": { "type": "string", "maxLength": 1000 },
+        "chromiumRevision": { "type": "string", "maxLength": 1000 },
+        "os": { "type": "string", "maxLength": 1000 },
+        "arch": { "type": "string", "maxLength": 1000 },
+        "host": { "type": "boolean" }
+      }
+    },
+    "totals": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["routes", "screenshots", "changed", "added", "removed"],
+      "properties": {
+        "routes": { "type": "integer", "minimum": 0 },
+        "screenshots": { "type": "integer", "minimum": 0 },
+        "changed": { "type": "integer", "minimum": 0 },
+        "added": { "type": "integer", "minimum": 0 },
+        "removed": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "comparisons": {
+      "type": "array",
+      "maxItems": 10000,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "project",
+          "route",
+          "screenshotName",
+          "status",
+          "expectedPath",
+          "actualPath",
+          "diffPath",
+          "diffPixelRatio"
+        ],
+        "properties": {
+          "project": { "type": "string", "maxLength": 1000 },
+          "route": { "type": "string", "maxLength": 1000 },
+          "screenshotName": { "type": "string", "maxLength": 1000 },
+          "status": { "type": "string", "enum": ["unchanged", "changed", "added", "removed"] },
+          "expectedPath": { "type": ["string", "null"], "maxLength": 1000 },
+          "actualPath": { "type": ["string", "null"], "maxLength": 1000 },
+          "diffPath": { "type": ["string", "null"], "maxLength": 1000 },
+          "diffPixelRatio": { "type": ["number", "null"], "minimum": 0, "maximum": 1 }
+        }
+      }
+    },
+    "errors": {
+      "type": "array",
+      "maxItems": 100,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["code", "message", "retryable"],
+        "properties": {
+          "code": { "type": "string", "maxLength": 1000 },
+          "message": { "type": "string", "maxLength": 5000 },
+          "retryable": { "type": "boolean" },
+          "context": {
+            "type": "object",
+            "maxProperties": 100,
+            "propertyNames": { "maxLength": 1000 },
+            "additionalProperties": { "type": "string", "maxLength": 1000 }
+          }
+        }
+      }
+    },
+    "reports": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["html", "json", "markdown"],
+      "properties": {
+        "html": { "type": ["string", "null"], "maxLength": 1000 },
+        "json": { "type": "string", "maxLength": 1000 },
+        "markdown": { "type": "string", "maxLength": 1000 }
+      }
+    }
+  }
+}
