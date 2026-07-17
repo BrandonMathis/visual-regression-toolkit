@@ -1,130 +1,111 @@
-# @thisdot/visual-regression
+# Visual Regression Toolkit
 
-A shared visual-regression toolkit for Next.js websites. One repository owns all of the generic
-machinery — configuration loading and hashing, prerender route discovery, deterministic Chromium
-capture, artifact-backed baselines, comparison, and reporting — so that a consumer repository adds
-only:
+Shared Playwright visual regression testing for internal Next.js websites. It discovers prerendered
+routes from `.next/prerender-manifest.json`, captures each route in Chromium at desktop, tablet, and
+phone sizes, and writes a small route/viewport summary for pull-request comments.
 
-- one declarative config file (`visual-regression.config.ts`);
-- one GitHub-sourced dev dependency (`@thisdot/visual-regression`, installed from this
-  repository); and
-- two thin GitHub Actions workflow callers.
+## Install
 
-Consumers never copy a Playwright visual spec, reporter, Docker runner, or baseline orchestration.
-
-Version 1 is deliberately small: Next.js prerendered routes only, Chromium only, full-page
-screenshots on three viewport projects (desktop, tablet, phone), baselines stored as immutable
-GitHub Actions artifacts in the consumer repository, and pull-request comparison against the exact
-baseline for the PR's base commit.
-
-## Architecture
-
-```text
-consumer repository
-├── visual-regression.config.ts
-├── package.json                         # github:BrandonMathis/visual-regression-toolkit dependency
-└── .github/workflows/
-    ├── visual-baseline.yml              # thin reusable-workflow caller
-    └── visual-regression.yml            # thin reusable-workflow caller
-             │
-             ▼
-visual-regression-toolkit (this repository)
-├── src/                                 # config, discovery, capture, baseline, result, reporters, CLI
-├── schemas/                             # baseline-manifest and visual-result JSON Schemas
-├── .github/workflows/                   # reusable visual-baseline.yml and visual-regression.yml
-└── docs/
+```sh
+npm install --save-dev github:BrandonMathis/visual-regression-toolkit
 ```
 
-The package builds and starts the consumer app, discovers prerendered routes from
-`.next/prerender-manifest.json`, generates its own isolated Playwright suite (it never touches a
-consumer's functional Playwright setup), stabilizes each page, captures screenshots, and creates or
-compares against a checksummed baseline manifest. The reusable workflows run everything in one
-pinned Playwright Linux container, publish baselines as immutable artifacts, and resolve the exact
-baseline for a pull request's base SHA — never a stale, newer, ancestor, or committed screenshot.
+The Git dependency builds `dist/` through its `prepare` script. The toolkit and its reusable
+workflows track `main`; it is not published to npm.
 
-See [docs/architecture.md](docs/architecture.md) for the full responsibility split, determinism
-model, baseline identity, result contract, and security model.
+## Configure
 
-## Quickstart
+Create `playwright.visual.config.ts` in the consumer repository:
 
-Full guide: [docs/installation.md](docs/installation.md).
+```ts
+import { createVisualConfig } from '@thisdot/visual-regression';
 
-1. Install the package directly from GitHub (there is no npm registry publication — the toolkit
-   is consumed from whatever is on `main`; the lockfile pins the exact commit you installed):
+export default createVisualConfig({
+  fonts: ['400 16px Manrope', '600 48px "Bricolage Grotesque"'],
+  colorScheme: 'dark',
+  port: 3000,
+  startCommand: 'npm run start -- --hostname 127.0.0.1',
+  exclude: ['/drafts'],
+});
+```
 
-   ```bash
-   npm install --save-dev github:BrandonMathis/visual-regression-toolkit
-   ```
+All fields are optional. Defaults are dark color scheme, port `3000`, the start command shown
+above, and no font waits or excluded route prefixes.
 
-2. Create `visual-regression.config.ts`:
+Add scripts:
 
-   ```ts
-   import { defineVisualConfig } from '@thisdot/visual-regression';
+```json
+{
+  "scripts": {
+    "test:visual": "run-visual",
+    "test:visual:update": "run-visual --update"
+  }
+}
+```
 
-   export default defineVisualConfig({
-     framework: { type: 'next-prerender' },
-     commands: {
-       build: 'npm run build',
-       start: 'npm run start -- --hostname 127.0.0.1',
-     },
-     server: { origin: 'http://127.0.0.1:3000' },
-   });
-   ```
+`run-visual` builds the site before testing. In CI it runs Playwright directly. Locally it uses the
+pinned Playwright Docker image so Linux font rasterization matches CI; Docker is therefore required
+for comparable local screenshots.
 
-3. Ignore generated output:
+Generate and commit the bootstrap baselines:
 
-   ```gitignore
-   /.visual-regression/
-   /playwright-report/visual/
-   /test-results/visual/
-   ```
+```sh
+npm run test:visual:update
+git add tests/visual/__screenshots__
+```
 
-4. Add the two workflow callers (`visual-baseline.yml` and `visual-regression.yml`) referencing
-   this repository's reusable workflows at `@main` — exact YAML in
-   [docs/installation.md](docs/installation.md).
+Screenshot names and locations remain compatible with `thisdot/workshop-website`: `/` becomes
+`home.png`, nested route separators become `--`, and files live under the `desktop`, `tablet`, and
+`phone` directories.
 
-5. Merge to the default branch, let the baseline workflow publish the first baseline, then open a
-   PR to see the comparison run.
+## Add the reusable workflows
 
-## CLI
+`.github/workflows/visual-baseline.yml`:
 
-The package installs one binary, `visual-regression`. The reusable workflows invoke it directly.
+```yaml
+name: Visual Baseline
+on:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  baseline:
+    uses: BrandonMathis/visual-regression-toolkit/.github/workflows/visual-baseline.yml@main
+```
 
-| Command                                      | Purpose                                                                                                                           |
-| -------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| `visual-regression baseline create`          | Build, start, discover routes, capture every route/project pair, create a complete baseline manifest, and verify it.              |
-| `visual-regression baseline verify <dir>`    | Validate a baseline directory: manifest identity, compatibility metadata, paths, dimensions, and SHA-256 checksums.               |
-| `visual-regression compare --baseline <dir>` | Build and capture a candidate, verify the baseline, compare all route/project pairs (changed, added, removed), and write results. |
-| `visual-regression report`                   | Print or open the latest HTML report.                                                                                             |
-| `visual-regression config hash`              | Print the normalized visual-contract hash for the loaded config; used by workflows for exact baseline lookup.                     |
+`.github/workflows/visual-regression.yml`:
 
-Common flags: `--config <path>` (config file location), `--json` (machine-readable stdout; logs go
-to stderr), and `--host` for diagnostic-only host execution — host screenshots are never
-authoritative or CI-comparable.
+```yaml
+name: Visual Regression
+on:
+  pull_request:
+    branches: [main]
+permissions:
+  actions: read
+  contents: read
+  pull-requests: write
+jobs:
+  compare:
+    uses: BrandonMathis/visual-regression-toolkit/.github/workflows/visual-regression.yml@main
+    with:
+      preview-app-domain: example.amplifyapp.com # optional
+```
 
-## Statuses and exit codes
+Both workflows accept `node-version` (default `24`). The PR workflow looks for the latest successful
+run of the consumer's `visual-baseline.yml`, overlays its `visual-baseline-screenshots` artifact on
+the committed bootstrap screenshots, uploads the Playwright HTML report, and updates one sticky PR
+comment (`<!-- visual-regression-report -->`). Visual differences are advisory; build, server,
+broken-image, and other non-diff failures still fail the check.
 
-Every `baseline create` and `compare` run writes a schema-validated
-`.visual-regression/result/visual-result.json` and `visual-summary.md`.
+The design deliberately uses the latest main baseline rather than an exact base SHA. It does not
+verify artifacts or couple package and workflow versions. With two trusted, low-traffic internal
+sites, rerunning after main settles is the intended remedy for a stale comparison.
 
-| Status                 | Exit | Meaning                                                                                                               |
-| ---------------------- | ---: | --------------------------------------------------------------------------------------------------------------------- |
-| `pass`                 |  `0` | `baseline-create` produced a complete verified baseline, or `compare` completed with no differences.                  |
-| `infrastructure-error` |  `1` | The requested operation could not complete or cannot be trusted. Always fails the workflow.                           |
-| `visual-diff`          |  `2` | A complete, verified `compare` found changed, added, or removed route/project screenshots. Advisory in CI by default. |
+## Update baselines
 
-`visual-diff` is valid only for `compare`; exit `2` never represents an incomplete comparison,
-missing baseline, or setup failure. Stable error codes (for example `BASELINE_NOT_FOUND`,
-`VISUAL_CONTRACT_CHANGED`, `TOOLKIT_VERSION_MISMATCH`) are documented with operator responses in
-[docs/operations.md](docs/operations.md).
+Run `npm run test:visual:update` and commit the changed screenshots when a visual change is intended.
+Merges to `main` also publish a fresh 90-day baseline artifact for subsequent pull requests.
 
-## Documentation
-
-- [docs/installation.md](docs/installation.md) — full consumer setup: package, config, gitignore,
-  workflow callers, and seed-and-verify steps.
-- [docs/operations.md](docs/operations.md) — baseline lifecycle, retrieval failure codes and what
-  to do about them, config-changing PRs, upgrades and rollback, intentional visual changes.
-- [docs/architecture.md](docs/architecture.md) — responsibility split, determinism model, baseline
-  identity, result contract, workflow security model.
-- [docs/release.md](docs/release.md) — distribution from GitHub, runtime coupling (package,
-  workflows, Playwright, Chromium, container, schemas), and optional git tags.
+The Playwright package and container are pinned to `1.61.1`. Update that version consistently in
+`package.json`, `src/config.ts`, and the three workflows, then refresh consumer baselines.

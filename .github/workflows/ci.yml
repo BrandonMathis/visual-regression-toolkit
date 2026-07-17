@@ -8,164 +8,58 @@ on:
 permissions:
   contents: read
 
-env:
-  ACTIONLINT_VERSION: '1.7.12'
-  ACTIONLINT_SHA256: '8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8'
-  ZIZMOR_VERSION: '1.27.0'
-
 jobs:
   checks:
     name: Package checks
     runs-on: ubuntu-latest
-    timeout-minutes: 15
-    defaults:
-      run:
-        shell: bash
     steps:
-      - name: Check out repository
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-        with:
-          persist-credentials: false
+      - name: Checkout
+        uses: actions/checkout@v7
 
-      - name: Set up Node.js
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - name: Setup Node
+        uses: actions/setup-node@v6
         with:
-          node-version: '22'
+          node-version: 24
           cache: npm
 
       - name: Install dependencies
-        run: |
-          set -euo pipefail
-          npm ci
+        run: npm ci
 
       - name: Check formatting
-        run: |
-          set -euo pipefail
-          npm run format:check
+        run: npm run format:check
 
       - name: Lint
-        run: |
-          set -euo pipefail
-          npm run lint
+        run: npm run lint
 
       - name: Typecheck
-        run: |
-          set -euo pipefail
-          npm run typecheck
-
-      - name: Unit tests
-        run: |
-          set -euo pipefail
-          npm test
+        run: npm run typecheck
 
       - name: Build
-        run: |
-          set -euo pipefail
-          npm run build
+        run: npm run build
 
-      - name: Verify package contents
-        run: |
-          set -euo pipefail
-          npm pack --dry-run
-
-  workflow-security:
-    name: Workflow security
+  smoke:
+    name: Fixture visual loop
     runs-on: ubuntu-latest
-    timeout-minutes: 10
-    defaults:
-      run:
-        shell: bash
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-        with:
-          persist-credentials: false
-
-      - name: Run actionlint
-        run: |
-          set -euo pipefail
-          archive="actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
-          curl -fsSL -o "/tmp/${archive}" \
-            "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/${archive}"
-          echo "${ACTIONLINT_SHA256}  /tmp/${archive}" | sha256sum --check --strict
-          tar -xzf "/tmp/${archive}" -C /tmp actionlint
-          /tmp/actionlint -color
-
-      - name: Run zizmor
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          pipx run "zizmor==${ZIZMOR_VERSION}" .github/workflows
-
-  integration:
-    name: Integration tests
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
     container:
-      # Same pinned runtime the reusable workflows use (src/runtime.ts).
-      image: mcr.microsoft.com/playwright:v1.61.1-noble@sha256:5b8f294aff9041b7191c34a4bab3ac270157a28774d4b0660e9743297b697e48
-    defaults:
-      run:
-        shell: bash
+      image: mcr.microsoft.com/playwright:v1.61.1-noble
     steps:
-      - name: Check out repository
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
         with:
-          persist-credentials: false
+          node-version: 24
+          cache: npm
 
-      - name: Install dependencies
-        run: |
-          set -euo pipefail
-          npm ci
+      - name: Install toolkit
+        run: npm ci
 
-      - name: Integration tests
-        run: |
-          set -euo pipefail
-          npm run test:integration
+      - name: Install fixture
+        run: npm ci --prefix tests/fixture
 
-  e2e:
-    name: End-to-end tests
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    container:
-      # Same pinned runtime the reusable workflows use (src/runtime.ts); the
-      # image bundles the matching Chromium, so no browser install is needed.
-      image: mcr.microsoft.com/playwright:v1.61.1-noble@sha256:5b8f294aff9041b7191c34a4bab3ac270157a28774d4b0660e9743297b697e48
-    defaults:
-      run:
-        shell: bash
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-        with:
-          persist-credentials: false
+      - name: Build toolkit
+        run: npm run build
 
-      - name: Install dependencies
-        run: |
-          set -euo pipefail
-          npm ci
-
-      - name: Build
-        run: |
-          set -euo pipefail
-          npm run build
-
-      - name: End-to-end tests
-        run: |
-          set -euo pipefail
-          npm run test:e2e
-
-  dependency-review:
-    name: Dependency review
-    if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-        with:
-          persist-credentials: false
-
-      - name: Dependency review
-        uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+      - name: Generate, compare, and detect a visual change
+        run: npm test

@@ -3,6 +3,10 @@ dist/
 .visual-regression/
 playwright-report/
 test-results/
-tests/fixtures/next-app/.next/
+tests/fixture/.next/
+tests/fixture/node_modules/
+tests/fixture/playwright-report/
+tests/fixture/test-results/
+tests/fixture/tests/visual/__screenshots__/
 package-lock.json
 CHANGELOG.md

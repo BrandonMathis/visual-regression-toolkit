@@ -1,6 +1,0 @@
-{
-  "version": 5,
-  "routes": {
-    "/": { "dataRoute": null, "srcRoute": null }
-  }
-}

@@ -1,7 +1,7 @@
 {
   "name": "@thisdot/visual-regression",
   "version": "1.0.0",
-  "description": "Shared visual regression toolkit: configuration, Next.js prerender route discovery, deterministic Chromium capture, artifact-backed baselines, comparison, and reporting.",
+  "description": "Shared visual regression toolkit for internal Next.js websites.",
   "type": "module",
   "license": "MIT",
   "repository": {
@@ -12,49 +12,40 @@
     "node": ">=22"
   },
   "bin": {
-    "visual-regression": "./dist/cli/bin.js"
+    "run-visual": "./dist/run-visual.mjs"
   },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
-      "import": "./dist/index.js"
+      "import": "./dist/index.js",
+      "require": "./dist/index.js"
     },
     "./package.json": "./package.json"
   },
   "files": [
     "dist",
-    "schemas",
     "README.md",
     "LICENSE"
   ],
   "scripts": {
     "prepare": "npm run build",
-    "build": "tsc -p tsconfig.build.json",
+    "build": "tsc -p tsconfig.build.json && cp src/run-visual.mjs dist/run-visual.mjs && chmod +x dist/run-visual.mjs",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "test": "vitest run tests/unit",
-    "test:integration": "vitest run tests/integration",
-    "test:e2e": "vitest run tests/e2e"
+    "test": "node tests/fixture/smoke.mjs"
   },
   "dependencies": {
-    "@playwright/test": "1.61.1",
-    "ajv": "8.20.0",
-    "commander": "15.0.0",
-    "jiti": "2.7.0",
-    "pixelmatch": "7.2.0",
-    "pngjs": "7.0.0",
-    "zod": "4.4.3"
+    "@playwright/test": "1.61.1"
   },
   "devDependencies": {
     "@types/node": "22.20.1",
     "eslint": "10.7.0",
     "prettier": "3.9.5",
     "typescript": "5.9.3",
-    "typescript-eslint": "8.64.0",
-    "vitest": "4.1.10"
+    "typescript-eslint": "8.64.0"
   }
 }

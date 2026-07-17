@@ -1,0 +1,33 @@
+:root {
+  color-scheme: light;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: #f4f7fb;
+  color: #172033;
+  font-family: Arial, sans-serif;
+}
+
+main {
+  width: min(52rem, 100%);
+  margin: 0 auto;
+  padding: 3rem 1.5rem;
+}
+
+h1 {
+  margin: 0 0 1rem;
+  font-size: 2.5rem;
+}
+
+.card {
+  margin-top: 2rem;
+  padding: 2rem;
+  border: 2px solid #5b6ee1;
+  border-radius: 1rem;
+  background: white;
+}

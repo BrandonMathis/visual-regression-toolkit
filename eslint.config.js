@@ -5,7 +5,11 @@ export default tseslint.config(
     ignores: [
       'dist/**',
       'node_modules/**',
-      'tests/fixtures/**',
+      'tests/fixture/.next/**',
+      'tests/fixture/node_modules/**',
+      'tests/fixture/playwright-report/**',
+      'tests/fixture/test-results/**',
+      'tests/fixture/tests/visual/__screenshots__/**',
       '.visual-regression/**',
       'playwright-report/**',
       'test-results/**',
