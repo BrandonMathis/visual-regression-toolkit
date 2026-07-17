@@ -1,7 +1,0 @@
-rules:
-  adhoc-packages:
-    # release.yml deliberately runs `npm install -g npm@11`: npm trusted
-    # publishing (OIDC provenance) requires npm >= 11.5.1 and Node 22 bundles
-    # npm 10. No other ad-hoc installation is permitted.
-    ignore:
-      - release.yml

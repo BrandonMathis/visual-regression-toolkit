@@ -40,9 +40,11 @@ jobs:
       # Pinned Playwright runtime; Node inside this image is the toolchain.
       image: mcr.microsoft.com/playwright:v1.61.1-noble@sha256:5b8f294aff9041b7191c34a4bab3ac270157a28774d4b0660e9743297b697e48
     env:
-      # Exact package version paired with this workflow commit (plan section 12).
+      # Package version paired with this workflow commit; both live on main and
+      # move together (GitHub-sourced installs, no npm registry).
       EXPECTED_TOOLKIT_VERSION: '1.0.0'
       TOOLKIT_PACKAGE_NAME: '@thisdot/visual-regression'
+      TOOLKIT_SOURCE_REPO: 'BrandonMathis/visual-regression-toolkit'
       # Baseline download lands OUTSIDE the generated .visual-regression/ tree.
       BASELINE_DOWNLOAD_DIR: '.visual-baseline-download'
     defaults:
@@ -55,17 +57,27 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Verify toolkit version pin
+      - name: Verify toolkit source and version
         run: |
           set -euo pipefail
           node --input-type=module - <<'SCRIPT'
           import { readFileSync } from 'node:fs';
           const name = process.env.TOOLKIT_PACKAGE_NAME;
           const expected = process.env.EXPECTED_TOOLKIT_VERSION;
+          const repo = process.env.TOOLKIT_SOURCE_REPO;
           const fail = (message) => {
             console.error(`TOOLKIT_VERSION_MISMATCH: ${message}`);
             process.exit(1);
           };
+          // Accepted spec forms for a GitHub-sourced dependency:
+          //   github:owner/repo[#ref], owner/repo[#ref],
+          //   git+https://github.com/owner/repo(.git)[#ref]
+          const isToolkitSource = (spec) =>
+            typeof spec === 'string' &&
+            (spec === repo ||
+              spec.startsWith(`${repo}#`) ||
+              spec.startsWith(`github:${repo}`) ||
+              spec.includes(`github.com/${repo}`));
           let pkg;
           try {
             pkg = JSON.parse(readFileSync('package.json', 'utf8'));
@@ -76,11 +88,11 @@ jobs:
             (v) => v !== undefined,
           );
           if (declared.length === 0) {
-            fail(`package.json does not declare ${name}; pin it to exactly ${expected}`);
+            fail(`package.json does not declare ${name}; install it with: npm install --save-dev github:${repo}`);
           }
-          for (const version of declared) {
-            if (version !== expected) {
-              fail(`package.json pins ${name} to "${version}", expected exactly "${expected}"`);
+          for (const spec of declared) {
+            if (!isToolkitSource(spec)) {
+              fail(`package.json resolves ${name} from "${spec}"; expected the GitHub source github:${repo}`);
             }
           }
           let lock;
@@ -89,26 +101,28 @@ jobs:
           } catch {
             fail('package-lock.json is missing or unreadable; commit an npm lockfile');
           }
-          const resolved = [];
+          const entries = [];
           for (const [key, entry] of Object.entries(lock.packages ?? {})) {
             if (key === `node_modules/${name}` || key.endsWith(`/node_modules/${name}`)) {
-              resolved.push(entry?.version);
+              entries.push(entry ?? {});
             }
           }
-          if (lock.dependencies?.[name]?.version !== undefined) {
-            resolved.push(lock.dependencies[name].version);
+          if (entries.length === 0) {
+            fail(`package-lock.json does not resolve ${name}; run: npm install github:${repo}`);
           }
-          if (resolved.length === 0) {
-            fail(`package-lock.json does not resolve ${name}; run npm install --save-exact`);
-          }
-          for (const version of resolved) {
-            if (version !== expected) {
+          for (const entry of entries) {
+            const resolved = entry.resolved ?? '';
+            if (!resolved.includes(`github.com/${repo}`)) {
+              fail(`package-lock.json resolves ${name} from "${resolved}"; expected git+https://github.com/${repo}`);
+            }
+            if (entry.version !== expected) {
               fail(
-                `package-lock.json resolves ${name} to "${version}", expected exactly "${expected}"`,
+                `package-lock.json resolves ${name}@"${entry.version}" but this workflow pairs with ${expected}; ` +
+                  `refresh the git dependency: npm install github:${repo}`,
               );
             }
           }
-          console.log(`Toolkit version OK: ${name}@${expected}`);
+          console.log(`Toolkit source OK: ${name}@${expected} from github.com/${repo}`);
           SCRIPT
 
       - name: Install dependencies

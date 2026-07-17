@@ -6,7 +6,8 @@ capture, artifact-backed baselines, comparison, and reporting — so that a cons
 only:
 
 - one declarative config file (`visual-regression.config.ts`);
-- one exact-versioned dev dependency (`@thisdot/visual-regression`); and
+- one GitHub-sourced dev dependency (`@thisdot/visual-regression`, installed from this
+  repository); and
 - two thin GitHub Actions workflow callers.
 
 Consumers never copy a Playwright visual spec, reporter, Docker runner, or baseline orchestration.
@@ -21,7 +22,7 @@ baseline for the PR's base commit.
 ```text
 consumer repository
 ├── visual-regression.config.ts
-├── package.json                         # exact package version
+├── package.json                         # github:BrandonMathis/visual-regression-toolkit dependency
 └── .github/workflows/
     ├── visual-baseline.yml              # thin reusable-workflow caller
     └── visual-regression.yml            # thin reusable-workflow caller
@@ -48,10 +49,11 @@ model, baseline identity, result contract, and security model.
 
 Full guide: [docs/installation.md](docs/installation.md).
 
-1. Install the exact package version paired with your chosen workflow release:
+1. Install the package directly from GitHub (there is no npm registry publication — the toolkit
+   is consumed from whatever is on `main`; the lockfile pins the exact commit you installed):
 
    ```bash
-   npm install --save-dev --save-exact @thisdot/visual-regression@1.0.0
+   npm install --save-dev github:BrandonMathis/visual-regression-toolkit
    ```
 
 2. Create `visual-regression.config.ts`:
@@ -78,7 +80,7 @@ Full guide: [docs/installation.md](docs/installation.md).
    ```
 
 4. Add the two workflow callers (`visual-baseline.yml` and `visual-regression.yml`) referencing
-   this repository's reusable workflows at the full release commit SHA — exact YAML in
+   this repository's reusable workflows at `@main` — exact YAML in
    [docs/installation.md](docs/installation.md).
 
 5. Merge to the default branch, let the baseline workflow publish the first baseline, then open a
@@ -124,5 +126,5 @@ missing baseline, or setup failure. Stable error codes (for example `BASELINE_NO
   to do about them, config-changing PRs, upgrades and rollback, intentional visual changes.
 - [docs/architecture.md](docs/architecture.md) — responsibility split, determinism model, baseline
   identity, result contract, workflow security model.
-- [docs/release.md](docs/release.md) — release coupling (package, workflow SHA, Playwright,
-  Chromium, container, schemas) and the release checklist.
+- [docs/release.md](docs/release.md) — distribution from GitHub, runtime coupling (package,
+  workflows, Playwright, Chromium, container, schemas), and optional git tags.

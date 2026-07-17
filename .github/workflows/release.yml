@@ -1,6 +1,7 @@
-# Release coupling (plan section 12): one immutable tag binds the exact npm
-# package version, this workflow commit SHA, Node major, Playwright/Chromium
-# identity, container digest, and schema versions.
+# Release coupling (plan section 12, adapted): the toolkit is consumed
+# directly from GitHub (no npm registry). A tag binds the package version,
+# this workflow commit SHA, Node major, Playwright/Chromium identity,
+# container digest, and schema versions.
 name: Release
 
 on:
@@ -252,57 +253,9 @@ jobs:
           set -euo pipefail
           pipx run "zizmor==${ZIZMOR_VERSION}" .github/workflows
 
-  publish:
-    name: Publish to npm
-    needs: [verify, integration, e2e, workflow-security]
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    permissions:
-      contents: read
-      # npm trusted publishing (OIDC, provenance); no npm token secret exists.
-      id-token: write
-    defaults:
-      run:
-        shell: bash
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-        with:
-          persist-credentials: false
-
-      - name: Set up Node.js
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: '22'
-          registry-url: 'https://registry.npmjs.org'
-          # No caching in the release workflow (cache-poisoning hardening).
-          package-manager-cache: false
-
-      # Trusted publishing requires npm >= 11.5.1; Node 22 bundles npm 10.
-      - name: Update npm for trusted publishing
-        run: |
-          set -euo pipefail
-          npm install -g npm@11
-          npm --version
-
-      - name: Install dependencies
-        run: |
-          set -euo pipefail
-          npm ci
-
-      - name: Build
-        run: |
-          set -euo pipefail
-          npm run build
-
-      - name: Publish with provenance
-        run: |
-          set -euo pipefail
-          npm publish --provenance --access public
-
   release:
     name: Create GitHub release
-    needs: [publish]
+    needs: [verify, integration, e2e, workflow-security]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -324,13 +277,15 @@ jobs:
           cat > "$notes_file" <<EOF
           ## @thisdot/visual-regression ${version}
 
-          This release couples the package, reusable workflows, and runtime
-          identity. Consumers must upgrade the exact package version and the
-          workflow commit SHA together (plan section 12).
+          The toolkit is consumed directly from GitHub — there is no npm
+          registry publication. This tag couples the package, reusable
+          workflows, and runtime identity; consumers who want a fixed ref
+          instead of tracking main should move the git dependency and the
+          workflow ref to this tag together (plan section 12).
 
           | Component | Value |
           |---|---|
-          | npm package | \`@thisdot/visual-regression@${version}\` |
+          | Package install ref | \`github:${REPOSITORY}#${TAG}\` (or track \`github:${REPOSITORY}\` for main) |
           | Reusable workflow commit SHA | \`${WORKFLOW_SHA}\` |
           | Node major | ${NODE_MAJOR} |
           | Playwright | ${PLAYWRIGHT_VERSION} |
@@ -339,11 +294,15 @@ jobs:
           | Baseline manifest schema | ${BASELINE_MANIFEST_SCHEMA_VERSION} |
           | Visual result schema | ${VISUAL_RESULT_SCHEMA_VERSION} |
 
-          Reference the reusable workflows by this commit SHA:
+          To pin to this release instead of main:
+
+          \`\`\`bash
+          npm install --save-dev github:${REPOSITORY}#${TAG}
+          \`\`\`
 
           \`\`\`yaml
-          uses: ${REPOSITORY}/.github/workflows/visual-baseline.yml@${WORKFLOW_SHA}
-          uses: ${REPOSITORY}/.github/workflows/visual-regression.yml@${WORKFLOW_SHA}
+          uses: ${REPOSITORY}/.github/workflows/visual-baseline.yml@${TAG}
+          uses: ${REPOSITORY}/.github/workflows/visual-regression.yml@${TAG}
           \`\`\`
           EOF
           gh release create "$TAG" \

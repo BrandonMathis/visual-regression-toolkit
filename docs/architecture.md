@@ -149,6 +149,7 @@ later, they must run in a separate job that does not check out or execute consum
 validates, bounds, and escapes the fixed result artifact before receiving `pull-requests: write`.
 
 Controls on this repository itself: protected `main` and immutable release tags, CODEOWNERS review
-for workflows/schemas/releases, all third-party actions pinned to reviewed full commit SHAs,
-dependency review plus `actionlint` and `zizmor` in CI, package provenance via trusted
-publishing/OIDC, and no rewriting of published versions or tags.
+for workflows/schemas/releases, all third-party actions pinned to reviewed full commit SHAs, and
+dependency review plus `actionlint` and `zizmor` in CI. The package is consumed directly from this
+GitHub repository (no npm registry, no publish credentials anywhere); tags, when created, are
+never rewritten.

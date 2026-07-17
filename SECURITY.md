@@ -37,9 +37,11 @@ Shared repository controls:
 - CODEOWNERS review is required for workflows, schemas, and releases;
 - all third-party actions are pinned to reviewed full commit SHAs;
 - CI runs dependency review, `actionlint`, and `zizmor`; and
-- the package is published with provenance via npm trusted publishing (OIDC),
-  so no long-lived npm token exists.
+- the package is consumed directly from this GitHub repository — there is no
+  npm registry publication and no publish credential of any kind.
 
-Each release couples the exact package version, reusable-workflow commit SHA,
-Node major, Playwright and Chromium versions, container digest, and schema
-versions; consumers upgrade the package version and workflow SHA together.
+The package and the reusable workflows move together on `main`, coupled with
+Node major, Playwright and Chromium versions, the container digest, and schema
+versions; the workflows verify the consumer's locked install matches the
+version they embed. Consumers who pin a git tag keep the dependency ref and
+the workflow ref on the same tag.

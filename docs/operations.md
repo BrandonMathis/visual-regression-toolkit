@@ -57,14 +57,14 @@ browser/container identity.
 All of these are infrastructure errors: status `infrastructure-error`, exit `1`, always a red
 check. Advisory mode never applies to them.
 
-| Code                       | Meaning                                                                                                                                                                     | Operator response                                                                                                                                                                                                                                         |
-| -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `BASELINE_NOT_FOUND`       | No successful baseline run/artifact exists for the PR's exact base SHA (never published, or expired).                                                                       | Run the baseline workflow manually (`workflow_dispatch`) on the default branch, wait for it to publish, then re-run the comparison. If baselines keep expiring, confirm the monthly schedule is enabled.                                                  |
-| `BASELINE_NOT_READY`       | Baseline publication for the exact base SHA is in progress but did not finish within the 10-minute wait.                                                                    | Wait for the baseline run to complete, then re-run the comparison job. If the baseline run failed, fix it and re-run it first.                                                                                                                            |
-| `BASELINE_CORRUPT`         | The downloaded artifact failed verification: bad manifest, missing/extra files, or checksum/dimension drift.                                                                | Do not trust the artifact. Re-publish a baseline for the same SHA (new run supersedes the corrupt one by run-ID selection) and re-run the comparison. Recurring corruption suggests artifact tampering or an upload problem — investigate before merging. |
-| `BASELINE_INCOMPATIBLE`    | A baseline exists for the SHA but its repository, toolkit major/schema, Playwright/Chromium, or container/platform identity differs.                                        | Usually a half-applied upgrade: package version and workflow SHA moved separately. Align both to one release ([release.md](release.md)), publish a fresh baseline from the default branch, then re-run.                                                   |
-| `VISUAL_CONTRACT_CHANGED`  | An otherwise compatible base-SHA baseline exists, but the PR's normalized visual-contract hash differs — the PR changes the config in a pixel- or comparison-affecting way. | Expected for config-changing PRs. Follow the waiver rollout below; do not try to regenerate a baseline for the old commit with the new config.                                                                                                            |
-| `TOOLKIT_VERSION_MISMATCH` | The consumer's manifest/lockfile does not resolve exactly the package version the workflow release embeds. Fails before any configuration is evaluated or screenshots run.  | Reinstall with `npm install --save-dev --save-exact @thisdot/visual-regression@<paired version>`, commit `package.json` and the lockfile, or move the workflow SHA to the release paired with the installed version.                                      |
+| Code                       | Meaning                                                                                                                                                                                                                      | Operator response                                                                                                                                                                                                                                         |
+| -------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `BASELINE_NOT_FOUND`       | No successful baseline run/artifact exists for the PR's exact base SHA (never published, or expired).                                                                                                                        | Run the baseline workflow manually (`workflow_dispatch`) on the default branch, wait for it to publish, then re-run the comparison. If baselines keep expiring, confirm the monthly schedule is enabled.                                                  |
+| `BASELINE_NOT_READY`       | Baseline publication for the exact base SHA is in progress but did not finish within the 10-minute wait.                                                                                                                     | Wait for the baseline run to complete, then re-run the comparison job. If the baseline run failed, fix it and re-run it first.                                                                                                                            |
+| `BASELINE_CORRUPT`         | The downloaded artifact failed verification: bad manifest, missing/extra files, or checksum/dimension drift.                                                                                                                 | Do not trust the artifact. Re-publish a baseline for the same SHA (new run supersedes the corrupt one by run-ID selection) and re-run the comparison. Recurring corruption suggests artifact tampering or an upload problem — investigate before merging. |
+| `BASELINE_INCOMPATIBLE`    | A baseline exists for the SHA but its repository, toolkit major/schema, Playwright/Chromium, or container/platform identity differs.                                                                                         | Usually a half-applied upgrade: package version and workflow SHA moved separately. Align both to one release ([release.md](release.md)), publish a fresh baseline from the default branch, then re-run.                                                   |
+| `VISUAL_CONTRACT_CHANGED`  | An otherwise compatible base-SHA baseline exists, but the PR's normalized visual-contract hash differs — the PR changes the config in a pixel- or comparison-affecting way.                                                  | Expected for config-changing PRs. Follow the waiver rollout below; do not try to regenerate a baseline for the old commit with the new config.                                                                                                            |
+| `TOOLKIT_VERSION_MISMATCH` | The consumer's dependency is not sourced from this GitHub repository, or the lockfile-resolved package version differs from the version the workflow embeds. Fails before any configuration is evaluated or screenshots run. | Refresh the git dependency with `npm install --save-dev github:BrandonMathis/visual-regression-toolkit`, commit `package.json` and the lockfile. If you pin a tag, keep the dependency ref and the workflow ref on the same tag.                          |
 
 ## Config-changing PRs (the waiver rollout)
 
@@ -82,21 +82,27 @@ comparison instead returns `VISUAL_CONTRACT_CHANGED`. The reviewed rollout is:
 
 ## Upgrades and rollback
 
-The exact package version and the reusable-workflow commit SHA are one unit
-([release.md](release.md) records the pairs). The workflow embeds its expected package version and
-enforces the pairing with `TOOLKIT_VERSION_MISMATCH`.
+The package and the reusable workflows live in one repository and move together on `main` — there
+is no npm registry publication. Consumers install the package from GitHub (the lockfile pins the
+installed commit) and reference the workflows at `@main`, so the workflow side upgrades
+automatically while the package side stays where the lockfile pinned it. The workflows embed the
+package version they pair with and enforce it with `TOOLKIT_VERSION_MISMATCH`; whenever the
+toolkit changes in a pixel-affecting way, the package version on `main` is bumped so stale
+consumer pins fail fast instead of comparing incompatibly.
 
 To upgrade:
 
-1. In one PR, bump the exact dependency and move both callers' `@FULL_RELEASE_COMMIT_SHA` to the
-   new release SHA.
-2. If the release changes Playwright, Chromium, the container, stabilization defaults, or anything
+1. In one PR, refresh the git dependency
+   (`npm install --save-dev github:BrandonMathis/visual-regression-toolkit`) and commit
+   `package.json` plus the lockfile. The `@main` workflow refs need no change.
+2. If the update changes Playwright, Chromium, the container, stabilization defaults, or anything
    else pixel-affecting, existing baselines become incompatible by design; this PR may need the
    config-change-style waiver.
 3. Merge, and let the default-branch push publish a baseline under the new runtime identity.
 
-To roll back: restore both the previous exact package version and the previous workflow SHA
-together, merge, and publish a compatible baseline the same way. Never move one side alone.
+To roll back: pin the git dependency and both workflow refs to the same earlier commit or tag
+(`npm install github:BrandonMathis/visual-regression-toolkit#<ref>` and `@<ref>` in both
+callers), merge, and publish a compatible baseline the same way. Never move one side alone.
 
 ## Intentional visual changes
 

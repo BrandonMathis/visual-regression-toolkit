@@ -7,16 +7,23 @@ exact baseline for their base commit.
 Prerequisites: Node.js 22, a Next.js app with a production build that prerenders routes into
 `.next/prerender-manifest.json`, and GitHub Actions.
 
-## 1. Install the exact package
+## 1. Install the package from GitHub
+
+The toolkit is not published to an npm registry — it installs directly from this repository, and
+consumers track whatever is on `main`:
 
 ```bash
-npm install --save-dev --save-exact @thisdot/visual-regression@1.0.0
+npm install --save-dev github:BrandonMathis/visual-regression-toolkit
 ```
 
-Commit `package.json` and the lockfile. The version must be exact (no `^` or `~`) and must be the
-version paired with the workflow commit SHA you reference below — the reusable workflows verify
-this before running anything and fail with `TOOLKIT_VERSION_MISMATCH` on any drift. See
-[release.md](release.md) for the pairing table.
+Commit `package.json` and the lockfile. The lockfile pins the exact commit that was installed;
+`npm ci` reproduces it. The reusable workflows verify before running anything that the dependency
+is sourced from this repository and that its package version matches the version the workflows
+pair with, failing with `TOOLKIT_VERSION_MISMATCH` on drift — if that happens after the toolkit
+moves, refresh your pin with `npm install github:BrandonMathis/visual-regression-toolkit`. If a
+git tag exists and you prefer a fixed ref over `main`, install
+`github:BrandonMathis/visual-regression-toolkit#<tag>` and reference the workflows at the same
+tag. See [release.md](release.md) for the coupling table.
 
 ## 2. Add configuration
 
@@ -107,7 +114,7 @@ permissions:
 
 jobs:
   baseline:
-    uses: BrandonMathis/visual-regression-toolkit/.github/workflows/visual-baseline.yml@FULL_RELEASE_COMMIT_SHA
+    uses: BrandonMathis/visual-regression-toolkit/.github/workflows/visual-baseline.yml@main
     with:
       config-path: visual-regression.config.ts
       node-version: '22'
@@ -139,7 +146,7 @@ concurrency:
 
 jobs:
   compare:
-    uses: BrandonMathis/visual-regression-toolkit/.github/workflows/visual-regression.yml@FULL_RELEASE_COMMIT_SHA
+    uses: BrandonMathis/visual-regression-toolkit/.github/workflows/visual-regression.yml@main
     with:
       config-path: visual-regression.config.ts
       baseline-workflow-file: visual-baseline.yml
@@ -148,9 +155,10 @@ jobs:
 ```
 
 Do not add `secrets: inherit` — the comparison job executes pull-request code and must never
-receive secrets. In both callers, replace `FULL_RELEASE_COMMIT_SHA` with the immutable full commit
-SHA documented by the toolkit release you installed ([release.md](release.md)); never reference a
-branch or tag.
+receive secrets. Both callers reference the reusable workflows at `@main`: the workflows and the
+package move together on this repository's `main` branch. If you installed the package at a git
+tag instead, reference the workflows at that same tag; keep the two refs consistent either way
+([release.md](release.md)).
 
 ## 6. Seed and verify
 
@@ -171,11 +179,15 @@ the first baseline fail with `BASELINE_NOT_FOUND`.
 
 - Publish a baseline on every default-branch push, on the monthly schedule, and on manual request.
 - Review the GitHub job summary and download the HTML report when a PR shows differences.
-- Upgrade the exact package version and the workflow SHA together, never independently.
+- Upgrade by refreshing the git dependency (`npm install github:BrandonMathis/visual-regression-toolkit`)
+  and committing the lockfile; the `@main` workflow refs move automatically. If a run fails with
+  `TOOLKIT_VERSION_MISMATCH`, the workflows on `main` have moved ahead of your locked commit —
+  refresh the dependency the same way.
 - Regenerate baselines after any browser, container, stabilization-default, or visual-contract
   change.
 - For a PR that changes the visual contract (config hash), use the documented explicit check
   waiver, merge it, and wait for the resulting default-branch baseline before normal PR
   comparisons resume. See [operations.md](operations.md).
-- Roll back by restoring both the previous exact package version and workflow SHA, then publishing
-  a compatible baseline.
+- Roll back by pinning the git dependency and both workflow refs to an earlier commit or tag
+  together (`npm install github:BrandonMathis/visual-regression-toolkit#<ref>` plus `@<ref>` in
+  the callers), then publishing a compatible baseline.
