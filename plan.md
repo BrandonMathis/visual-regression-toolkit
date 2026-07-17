@@ -1,23 +1,24 @@
 # Shared Visual Regression Toolkit: Final Implementation Plan
 
+> **Distribution update:** npm publication, exact package versions, and immutable workflow release SHAs are no longer part of the implementation. Consumers use `BrandonMathis/visual-regression-toolkit@main` directly. Workflow runs read the reusable workflow's already-resolved `main` commit from GitHub's signed `job_workflow_sha` claim, record it in runtime identity, and use that commit throughout the run. Optional Git tags are validation markers only. Where the historical plan below discusses npm or paired package/workflow releases, this update takes precedence.
+
 ## 1. Goal
 
 Create one shared repository that provides a reusable visual-regression toolchain for multiple website repositories.
 
-The shared repository will publish:
+The shared repository provides directly from GitHub `main`:
 
-1. `@thisdot/visual-regression`, an exact-versioned TypeScript package and CLI that owns configuration, Next.js route discovery, browser orchestration, screenshot capture, baseline validation, comparison, and reporting.
-2. Two reusable GitHub Actions workflows that publish authoritative baselines and compare pull requests against the exact baseline for their base commit.
+1. a private npm-shaped TypeScript package and CLI, built from source by the reusable workflows, that owns configuration, Next.js route discovery, browser orchestration, screenshot capture, baseline validation, comparison, and reporting; and
+2. two reusable GitHub Actions workflows that publish authoritative baselines and compare pull requests against the exact baseline for their base commit.
 
 A consumer repository should contain only:
 
-- one declarative configuration file;
-- one exact package dependency;
+- one declarative configuration file with no toolkit package import;
 - optional local convenience scripts;
-- two thin reusable-workflow callers; and
+- two thin reusable-workflow callers pinned to toolkit `main`; and
 - no copied Playwright visual spec, reporter, Docker runner, or baseline orchestration.
 
-The first release favors a small, reliable CI workflow over a broad visual-testing platform.
+The initial implementation favors a small, reliable CI workflow over a broad visual-testing platform.
 
 ## 2. Version 1 scope
 
@@ -52,21 +53,21 @@ The first release favors a small, reliable CI workflow over a broad visual-testi
 - SBOM generation, external canary repositories, and rollback rehearsals.
 - A custom GitHub Action in addition to the package and reusable workflows.
 
-Deferred features must not become version 1 release gates.
+Deferred features must not become initial implementation gates.
 
-## 3. Decisions fixed for version 1
+## 3. Decisions fixed for the initial implementation
 
-1. **Repository:** `thisdot/visual-regression-toolkit`.
-2. **Package:** `@thisdot/visual-regression`.
-3. **Registry:** publish version 1 to public npm so PR installation is tokenless. If organization policy forbids public publication, stop before Phase 1 and approve a separate private-distribution and fork-PR design; do not quietly add package credentials to this workflow.
+1. **Repository and distribution channel:** `BrandonMathis/visual-regression-toolkit@main`.
+2. **Internal package name:** `@thisdot/visual-regression`; it remains private and is built from GitHub source rather than published.
+3. **Registry:** no toolkit content is published to npm. Consumer repositories do not install a toolkit package.
 4. **Runtime:** Node.js 22.
 5. **Browser:** one exact Playwright release and its bundled Chromium revision.
 6. **Platform:** the matching Playwright Linux container, pinned by immutable digest and run as `linux/amd64`.
 7. **Baselines:** immutable GitHub Actions artifacts in the consumer repository, retained for 90 days.
 8. **Workflow topology:** separate reusable baseline and pull-request comparison workflows.
 9. **Enforcement:** visual differences are advisory by default; infrastructure errors are always blocking.
-10. **PR reporting:** job summaries and artifacts only in version 1.
-11. **Release coupling:** one toolkit release binds the exact package version, workflow commit, Playwright version, Chromium revision, container digest, and baseline/result schema versions.
+10. **PR reporting:** job summaries and artifacts only in the initial implementation.
+11. **Main-channel coupling:** GitHub's signed `job_workflow_sha` claim identifies the commit that supplied the reusable workflow. Every job loads that same source commit, and baseline/result runtime identity records it with the Playwright, Chromium, container, and schema identities.
 12. **Config-changing PRs:** a changed visual-contract hash cannot use the existing baseline. The comparison returns an infrastructure error with `VISUAL_CONTRACT_CHANGED`. The reviewed rollout is to merge with an explicit check waiver, publish a baseline from the resulting default-branch commit, and then resume normal comparisons. Version 1 will not synthesize an ephemeral baseline for a new contract.
 
 ## 4. Ownership and architecture
@@ -74,13 +75,12 @@ Deferred features must not become version 1 release gates.
 ```text
 consumer repository
 ├── visual-regression.config.ts
-├── package.json                         # exact package version
 └── .github/workflows/
     ├── visual-baseline.yml              # thin reusable-workflow caller
     └── visual-regression.yml            # thin reusable-workflow caller
              │
              ▼
-thisdot/visual-regression-toolkit
+BrandonMathis/visual-regression-toolkit
 ├── src/
 │   ├── cli/
 │   ├── config/
@@ -212,7 +212,7 @@ Default projects:
   { name: 'desktop', width: 1440, height: 900 },
   { name: 'tablet', width: 768, height: 1024, hasTouch: true },
   { name: 'phone', width: 375, height: 812, hasTouch: true, isMobile: true },
-];
+]
 ```
 
 Validation must:
@@ -255,12 +255,12 @@ Equivalent normalized configurations must produce the same hash. Any intentional
 
 Version 1 commands:
 
-| Command                                      | Purpose                                                                                                 |
-| -------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
-| `visual-regression baseline create`          | Build, start, discover, capture, create a complete manifest, and verify it.                             |
-| `visual-regression baseline verify <dir>`    | Validate manifest identity, compatibility, paths, dimensions, and checksums.                            |
+| Command | Purpose |
+|---|---|
+| `visual-regression baseline create` | Build, start, discover, capture, create a complete manifest, and verify it. |
+| `visual-regression baseline verify <dir>` | Validate manifest identity, compatibility, paths, dimensions, and checksums. |
 | `visual-regression compare --baseline <dir>` | Build and capture a candidate, verify the baseline, compare all route/project pairs, and write results. |
-| `visual-regression report`                   | Print or open the latest HTML report.                                                                   |
+| `visual-regression report` | Print or open the latest HTML report. |
 
 All commands support structured logging and a JSON-output mode where needed by workflows. Logs go to stderr when stdout is reserved for JSON.
 
@@ -410,11 +410,11 @@ Every operation writes a bounded, schema-validated `visual-result.json` with an 
 
 ### Status and exit codes
 
-| Status                 | Exit | Meaning                                                                                              |
-| ---------------------- | ---: | ---------------------------------------------------------------------------------------------------- |
-| `pass`                 |  `0` | `baseline-create` produced a complete verified baseline, or `compare` completed with no differences. |
-| `infrastructure-error` |  `1` | The requested operation could not complete or cannot be trusted.                                     |
-| `visual-diff`          |  `2` | A complete, verified `compare` found changed, added, or removed route/project screenshots.           |
+| Status | Exit | Meaning |
+|---|---:|---|
+| `pass` | `0` | `baseline-create` produced a complete verified baseline, or `compare` completed with no differences. |
+| `infrastructure-error` | `1` | The requested operation could not complete or cannot be trusted. |
+| `visual-diff` | `2` | A complete, verified `compare` found changed, added, or removed route/project screenshots. |
 
 `visual-diff` is valid only for `compare`. Exit `2` must never represent an incomplete comparison, missing baseline, or setup failure. A successful `baseline-create` means the artifact content is ready to publish; the workflow reports successful baseline publication only after the immutable artifact upload itself succeeds.
 
@@ -472,27 +472,22 @@ Version 1 does not post PR comments, so no privileged reporting job is required.
 - Publish package provenance through trusted publishing/OIDC.
 - Do not rewrite package versions or release tags.
 
-## 12. Package and workflow release coupling
+## 12. GitHub main and runtime coupling
 
-Each toolkit release records:
+Consumers reference both reusable workflows at `BrandonMathis/visual-regression-toolkit@main` and install no toolkit package.
 
-- exact npm package version;
-- immutable reusable-workflow commit SHA;
+A clean job reads GitHub's signed `job_workflow_sha` claim before consumer code executes. That commit supplied the reusable workflow YAML and is passed as an immutable output to every resolver, capture, and trusted-gate job. Each job fetches and builds that exact source commit.
+
+Runtime identity records:
+
+- toolkit Git commit;
 - Node major;
 - exact Playwright version;
 - Chromium revision;
 - container image digest/platform; and
 - manifest/result schema versions.
 
-Consumers must:
-
-- install with `--save-exact`;
-- commit the lockfile; and
-- reference reusable workflows by full commit SHA.
-
-The reusable workflow embeds its expected package version. Before evaluating configuration or running screenshots, it verifies the consumer manifest and lockfile resolve exactly that version. Mismatches fail with `TOOLKIT_VERSION_MISMATCH`.
-
-A Playwright, Chromium, container, stabilization-default, or other pixel-affecting release change requires a coordinated toolkit release and new consumer baselines.
+A toolkit-main, Playwright, Chromium, container, stabilization-default, or other pixel-affecting change requires new consumer baselines. Optional Git tags validate source only and do not publish packages.
 
 ## 13. Implementation phases
 
@@ -572,7 +567,7 @@ A Playwright, Chromium, container, stabilization-default, or other pixel-affecti
 - Build `visual-baseline.yml` with push, schedule, and manual caller support.
 - Build `visual-regression.yml` for pull-request comparison.
 - Add exact-base-SHA lookup, deterministic artifact selection, and bounded waiting.
-- Verify package/workflow/runtime coupling before execution.
+- Verify called-workflow Git commit and runtime coupling before execution.
 - Reuse the baseline manifest's logical date for candidate build, start, and capture.
 - Run screenshot work in the pinned container.
 - Preserve exit status while always uploading reports and diagnostics.
@@ -596,47 +591,47 @@ A Playwright, Chromium, container, stabilization-default, or other pixel-affecti
 - Test baseline publication and exact retrieval with fixture-driven GitHub API scripts.
 - Test malformed and oversized result payload rejection.
 - Validate workflow YAML and pinned actions with `actionlint` and `zizmor`.
-- Test package tarball installation and exact-version mismatch behavior.
+- Test the repository-local tarball smoke path and toolkit-commit mismatch behavior.
 
 **Acceptance**
 
 - Repository-local tests prove baseline publication, unchanged comparison, deliberate pixel change, added/removed routes, all infrastructure failures, exact-SHA rejection, logical-date reuse, and malformed untrusted output handling.
 - No high-severity workflow-security finding remains.
 
-### Phase 7: Document, release, and independently review
+### Phase 7: Document, tag validation, and independent review
 
 **Work**
 
 - Document configuration, CLI commands, workflow inputs, artifacts, result codes, and baseline lifecycle.
 - Document initial seeding, artifact expiry, config-changing PR rollout, upgrades, rollback, and intentional visual changes.
-- Publish an immutable release with package version and workflow SHA recorded together.
+- Validate optional Git tags without publishing package artifacts or creating another distribution channel.
 - Conduct focused reviews of baseline correctness, workflow security, and screenshot determinism.
 
 **Acceptance**
 
 - A clean consumer can adopt the toolkit using only the installation guide.
 - No blocker or high-severity review finding remains.
-- The released package/workflow pair passes the complete fixture lifecycle.
+- Toolkit `main` and the reusable workflows pass the complete fixture lifecycle.
 
 ## 14. Validation matrix
 
-| Scenario                                   | CLI result                      | Workflow behavior                                            |
-| ------------------------------------------ | ------------------------------- | ------------------------------------------------------------ |
+| Scenario | CLI result | Workflow behavior |
+|---|---|---|
 | Complete baseline creation and publication | `baseline-create`: `pass` / `0` | Green only after immutable verified artifact upload succeeds |
-| Unchanged candidate                        | `pass` / `0`                    | Green                                                        |
-| Pixel difference                           | `visual-diff` / `2`             | Advisory green; warning summary and report                   |
-| Added or removed route                     | `visual-diff` / `2`             | Advisory green; route/project details                        |
-| Build or server failure                    | `infrastructure-error` / `1`    | Red with stable error code                                   |
-| Resource or capture timeout                | `infrastructure-error` / `1`    | Red with route/resource context                              |
-| Missing exact baseline                     | `infrastructure-error` / `1`    | `BASELINE_NOT_FOUND`                                         |
-| Active baseline exceeds wait               | `infrastructure-error` / `1`    | `BASELINE_NOT_READY`                                         |
-| Corrupt manifest or screenshot             | `infrastructure-error` / `1`    | `BASELINE_CORRUPT`                                           |
-| Wrong SHA/config/runtime                   | `infrastructure-error` / `1`    | `BASELINE_INCOMPATIBLE`                                      |
-| Changed visual contract                    | `infrastructure-error` / `1`    | `VISUAL_CONTRACT_CHANGED` with rollout instructions          |
-| Package/workflow mismatch                  | `infrastructure-error` / `1`    | `TOOLKIT_VERSION_MISMATCH` before capture                    |
-| Newer baseline for another SHA             | N/A                             | Exact artifact selected; wrong artifact ignored              |
-| Malformed/oversized result                 | Rejected                        | Workflow fails; no advisory conversion                       |
-| Host execution                             | Diagnostic only                 | Never publishes an authoritative baseline                    |
+| Unchanged candidate | `pass` / `0` | Green |
+| Pixel difference | `visual-diff` / `2` | Advisory green; warning summary and report |
+| Added or removed route | `visual-diff` / `2` | Advisory green; route/project details |
+| Build or server failure | `infrastructure-error` / `1` | Red with stable error code |
+| Resource or capture timeout | `infrastructure-error` / `1` | Red with route/resource context |
+| Missing exact baseline | `infrastructure-error` / `1` | `BASELINE_NOT_FOUND` |
+| Active baseline exceeds wait | `infrastructure-error` / `1` | `BASELINE_NOT_READY` |
+| Corrupt manifest or screenshot | `infrastructure-error` / `1` | `BASELINE_CORRUPT` |
+| Wrong SHA/config/runtime | `infrastructure-error` / `1` | `BASELINE_INCOMPATIBLE` |
+| Changed visual contract | `infrastructure-error` / `1` | `VISUAL_CONTRACT_CHANGED` with rollout instructions |
+| Toolkit commit/runtime mismatch | `infrastructure-error` / `1` | Baseline is rejected as incompatible before comparison |
+| Newer baseline for another SHA | N/A | Exact artifact selected; wrong artifact ignored |
+| Malformed/oversized result | Rejected | Workflow fails; no advisory conversion |
+| Host execution | Diagnostic only | Never publishes an authoritative baseline |
 
 Required repository checks:
 
@@ -655,19 +650,11 @@ zizmor .github/workflows
 
 ## 15. Consumer installation guide
 
-### 15.1 Install the exact package
+### 15.1 Add configuration
 
-```bash
-npm install --save-dev --save-exact @thisdot/visual-regression@1.0.0
-```
+Create a plain `visual-regression.config.ts` using the configuration contract in Section 5. It imports no toolkit package. Keep production credentials out of the file and visual workflows.
 
-Commit `package.json` and the lockfile. Use the exact version paired with the selected workflow commit.
-
-### 15.2 Add configuration
-
-Create `visual-regression.config.ts` using the configuration contract in Section 5. Keep production credentials out of the file and visual workflows. Use harmless test values and disable external side effects.
-
-### 15.3 Ignore generated output
+### 15.2 Ignore generated output
 
 ```gitignore
 /.visual-regression/
@@ -677,56 +664,42 @@ Create `visual-regression.config.ts` using the configuration contract in Section
 
 Baselines used by CI are artifacts, not committed screenshots.
 
-### 15.4 Add the baseline caller
-
-Create `.github/workflows/visual-baseline.yml`:
+### 15.3 Add the baseline caller
 
 ```yaml
 name: Visual Baseline
-
 on:
   push:
     branches: [main]
   schedule:
     - cron: '0 8 1 * *'
   workflow_dispatch:
-
 permissions:
   contents: read
-
+  id-token: write
 jobs:
   baseline:
-    uses: thisdot/visual-regression-toolkit/.github/workflows/visual-baseline.yml@FULL_RELEASE_COMMIT_SHA
+    uses: BrandonMathis/visual-regression-toolkit/.github/workflows/visual-baseline.yml@main
     with:
       config-path: visual-regression.config.ts
       node-version: '22'
       retention-days: 90
 ```
 
-The monthly schedule refreshes artifacts in repositories without recent default-branch changes.
-
-### 15.5 Add the comparison caller
-
-Create `.github/workflows/visual-regression.yml`:
+### 15.4 Add the comparison caller
 
 ```yaml
 name: Visual Regression
-
 on:
   pull_request:
     branches: [main]
-
 permissions:
   actions: read
   contents: read
-
-concurrency:
-  group: visual-regression-${{ github.event.pull_request.number }}-${{ github.event.pull_request.head.sha }}
-  cancel-in-progress: true
-
+  id-token: write
 jobs:
   compare:
-    uses: thisdot/visual-regression-toolkit/.github/workflows/visual-regression.yml@FULL_RELEASE_COMMIT_SHA
+    uses: BrandonMathis/visual-regression-toolkit/.github/workflows/visual-regression.yml@main
     with:
       config-path: visual-regression.config.ts
       baseline-workflow-file: visual-baseline.yml
@@ -734,35 +707,23 @@ jobs:
       visual-diffs-are-informational: true
 ```
 
-Do not add `secrets: inherit`. Replace `FULL_RELEASE_COMMIT_SHA` with the immutable SHA documented by the toolkit release.
+Do not add `secrets: inherit`. `id-token: write` is consumed only by the clean job that verifies the called workflow commit; consumer-code jobs do not receive it.
 
-### 15.6 Seed and verify
+### 15.5 Seed, verify, and operate
 
 1. Merge the configuration and callers to the default branch.
-2. Allow the push workflow, or a manual baseline run, to publish the first exact-SHA baseline.
-3. Confirm the artifact contains `baseline-manifest.json` and all expected screenshots.
-4. Open a no-change PR and confirm a clean comparison.
-5. Add a temporary CSS change and confirm a `visual-diff`, report, and advisory workflow conclusion.
-6. Trigger a temporary build failure and confirm an infrastructure error remains blocking.
-7. Revert the temporary changes.
-
-Do not make comparison a required check until the initial baseline exists.
-
-### 15.7 Operate and upgrade
-
-- Publish a baseline on every default-branch push, monthly schedule, and manual request.
-- Review the GitHub summary and download the HTML report for differences.
-- Upgrade the exact package version and workflow SHA together.
-- Regenerate baselines after any browser, container, default, or visual-contract change.
-- For a config-changing PR, use the documented explicit waiver, merge it, and wait for the resulting default-branch baseline before normal PR comparisons resume.
-- Roll back by restoring both the previous exact package version and workflow SHA, then publishing a compatible baseline.
+2. Publish the first exact-SHA baseline.
+3. Confirm a no-change PR passes, a temporary CSS change produces an advisory `visual-diff`, and a build failure remains blocking.
+4. Publish baselines on default-branch pushes, monthly schedules, and manual requests.
+5. After toolkit `main` changes, publish fresh compatible baselines before resuming comparisons.
+6. Roll back toolkit behavior by reverting the change on toolkit `main`, not by restoring an npm version.
 
 ## 16. Definition of done
 
-Version 1 is complete when:
+The initial implementation is complete when:
 
 - generic visual-test logic exists only in the shared toolkit;
-- a consumer adds one config file, one exact dependency, and two thin workflow callers;
+- a consumer adds one config file, no toolkit package dependency, and two thin `@main` workflow callers;
 - no consumer-owned visual Playwright spec or reporter is required;
 - Next.js prerender routes are discovered automatically and safely;
 - screenshots run in one pinned Chromium/Linux environment;
@@ -771,7 +732,7 @@ Version 1 is complete when:
 - pass, visual difference, and infrastructure error have stable schemas and exit codes;
 - advisory mode cannot hide infrastructure failures;
 - consumer code never executes with secrets or PR-write permission;
-- package, workflow, Playwright, Chromium, and container versions cannot drift;
+- workflow YAML and toolkit source use one verified Git commit per run, while Playwright, Chromium, and container identities cannot drift;
 - fixture tests prove deterministic capture and the complete baseline/comparison lifecycle;
 - installation succeeds from a clean consumer repository without undocumented steps; and
 - baseline-correctness, workflow-security, and screenshot-determinism reviews have no unresolved blockers.

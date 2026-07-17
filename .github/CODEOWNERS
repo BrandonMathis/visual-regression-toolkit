@@ -1,8 +1,7 @@
-# Default owner for everything in the repository.
 * @BrandonMathis
-
-# Workflow, schema, and source changes require explicit owner review
-# (plan section 11: shared repository controls).
-/.github/ @BrandonMathis
+/.github/workflows/ @BrandonMathis
 /schemas/ @BrandonMathis
-/src/ @BrandonMathis
+/src/contracts/ @BrandonMathis
+/src/workflow/ @BrandonMathis
+/package.json @BrandonMathis
+/package-lock.json @BrandonMathis

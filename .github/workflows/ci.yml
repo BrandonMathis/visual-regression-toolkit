@@ -1,171 +1,114 @@
 name: CI
 
 on:
+  pull_request:
   push:
     branches: [main]
-  pull_request:
 
-permissions:
-  contents: read
+permissions: {}
 
-env:
-  ACTIONLINT_VERSION: '1.7.12'
-  ACTIONLINT_SHA256: '8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8'
-  ZIZMOR_VERSION: '1.27.0'
+concurrency:
+  group: ci-${{ github.repository_id }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  checks:
-    name: Package checks
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    defaults:
-      run:
-        shell: bash
+  package:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    container:
+      image: mcr.microsoft.com/playwright:v1.61.1-noble@sha256:cf0daee9b994042e011bc29f20cdff1a9f682a039b43fcd738f7d8a9d3bcd9d6
+      options: --platform linux/amd64
     steps:
-      - name: Check out repository
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           persist-credentials: false
-
-      - name: Set up Node.js
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: '22'
-          cache: npm
-
-      - name: Install dependencies
-        run: |
-          set -euo pipefail
-          npm ci
-
-      - name: Check formatting
+          clean: true
+      - name: Assert supported Node runtime
+        run: '[[ "$(node --version)" == v22.* ]]'
+      - name: Install exact dependencies
+        run: npm ci --no-audit --no-fund
+      - name: Repository checks
         run: |
           set -euo pipefail
           npm run format:check
-
-      - name: Lint
-        run: |
-          set -euo pipefail
           npm run lint
-
-      - name: Typecheck
-        run: |
-          set -euo pipefail
           npm run typecheck
-
-      - name: Unit tests
-        run: |
-          set -euo pipefail
           npm test
-
-      - name: Build
-        run: |
-          set -euo pipefail
-          npm run build
-
-      - name: Verify package contents
-        run: |
-          set -euo pipefail
-          npm pack --dry-run
-
-  workflow-security:
-    name: Workflow security
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    defaults:
-      run:
-        shell: bash
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-        with:
-          persist-credentials: false
-
-      - name: Run actionlint
-        run: |
-          set -euo pipefail
-          archive="actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
-          curl -fsSL -o "/tmp/${archive}" \
-            "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/${archive}"
-          echo "${ACTIONLINT_SHA256}  /tmp/${archive}" | sha256sum --check --strict
-          tar -xzf "/tmp/${archive}" -C /tmp actionlint
-          /tmp/actionlint -color
-
-      - name: Run zizmor
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          pipx run "zizmor==${ZIZMOR_VERSION}" .github/workflows
-
-  integration:
-    name: Integration tests
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    container:
-      # Same pinned runtime the reusable workflows use (src/runtime.ts).
-      image: mcr.microsoft.com/playwright:v1.61.1-noble@sha256:5b8f294aff9041b7191c34a4bab3ac270157a28774d4b0660e9743297b697e48
-    defaults:
-      run:
-        shell: bash
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-        with:
-          persist-credentials: false
-
-      - name: Install dependencies
-        run: |
-          set -euo pipefail
-          npm ci
-
-      - name: Integration tests
-        run: |
-          set -euo pipefail
           npm run test:integration
-
-  e2e:
-    name: End-to-end tests
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
+          npm run check:schemas
+          npm run build
+          npm run check:package
+          npm audit --audit-level=high
+      - name: Enforce immutable workflow references
+        run: npm run check:workflows
+  browser:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
     container:
-      # Same pinned runtime the reusable workflows use (src/runtime.ts); the
-      # image bundles the matching Chromium, so no browser install is needed.
-      image: mcr.microsoft.com/playwright:v1.61.1-noble@sha256:5b8f294aff9041b7191c34a4bab3ac270157a28774d4b0660e9743297b697e48
-    defaults:
-      run:
-        shell: bash
+      image: mcr.microsoft.com/playwright:v1.61.1-noble@sha256:cf0daee9b994042e011bc29f20cdff1a9f682a039b43fcd738f7d8a9d3bcd9d6
+      options: --platform linux/amd64
     steps:
-      - name: Check out repository
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           persist-credentials: false
-
-      - name: Install dependencies
-        run: |
-          set -euo pipefail
-          npm ci
-
-      - name: Build
+          clean: true
+      - run: '[[ "$(node --version)" == v22.* ]]'
+      - run: npm ci --no-audit --no-fund
+      - run: npm ci --prefix tests/fixtures/next-app --no-audit --no-fund
+      - name: Run packed authoritative browser and Next fixture lifecycle
+        shell: bash
         run: |
           set -euo pipefail
           npm run build
-
-      - name: End-to-end tests
-        run: |
-          set -euo pipefail
-          npm run test:e2e
-
+          tarball="$(npm pack --pack-destination "$RUNNER_TEMP" --json | jq -er '.[0].filename')"
+          npm install --prefix "$RUNNER_TEMP/packed-toolkit" --ignore-scripts --no-audit --no-fund --no-save "$RUNNER_TEMP/$tarball"
+          RUN_NEXT_FIXTURE_E2E=1 \
+          VISUAL_REGRESSION_AUTHORITATIVE=1 \
+          VISUAL_REGRESSION_TOOLKIT_COMMIT="$GITHUB_SHA" \
+          VISUAL_REGRESSION_CLI="$RUNNER_TEMP/packed-toolkit/node_modules/@thisdot/visual-regression/dist/cli/main.js" \
+            npm run test:e2e
   dependency-review:
-    name: Dependency review
     if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
+    permissions:
+      contents: read
     steps:
-      - name: Check out repository
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - name: Review dependency changes
+        uses: actions/dependency-review-action@2031cfc080254a8a887f58cffee85186f0e49e48 # v4.9.0
+        with:
+          fail-on-severity: high
+  workflow-security:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           persist-credentials: false
-
-      - name: Dependency review
-        uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+          clean: true
+      - name: Install and run actionlint 1.7.7
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/actionlint.tar.gz"
+          curl --proto '=https' --tlsv1.2 --fail --silent --show-error --location \
+            --output "$archive" \
+            https://github.com/rhysd/actionlint/releases/download/v1.7.7/actionlint_1.7.7_linux_amd64.tar.gz
+          echo '023070a287cd8cccd71515fedc843f1985bf96c436b7effaecce67290e7e0757  '"$archive" | sha256sum --check --strict
+          tar -xzf "$archive" -C "$RUNNER_TEMP" actionlint
+          "$RUNNER_TEMP/actionlint"
+      - name: Run zizmor 1.27.0
+        uses: zizmorcore/zizmor-action@6599ee8b7a49aef6a770f63d261d214911a7ce02 # v0.6.0
+        with:
+          version: 1.27.0
+          advanced-security: false
+          online-audits: false
+          persona: auditor
+          min-severity: medium

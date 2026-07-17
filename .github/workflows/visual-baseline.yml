@@ -1,216 +1,232 @@
-# Reusable baseline publication workflow (plan Phase 5, sections 8, 11, 12).
-# Consumers call this by full commit SHA:
-#   uses: BrandonMathis/visual-regression-toolkit/.github/workflows/visual-baseline.yml@<full-sha>
-name: Visual Baseline (Reusable)
+name: Reusable visual baseline
 
 on:
   workflow_call:
     inputs:
       config-path:
-        description: 'Path to the visual regression config file in the caller repository.'
-        type: string
+        description: Repository-relative visual configuration path
         required: false
-        default: 'visual-regression.config.ts'
+        type: string
+        default: visual-regression.config.ts
       node-version:
-        description: 'Node.js major version expected by the toolkit (informational; the pinned container provides the runtime).'
+        description: Supported Node major; only 22 is accepted
+        required: false
         type: string
-        required: false
-        default: '22'
+        default: "22"
       retention-days:
-        description: 'Retention in days for the published baseline artifact.'
-        type: number
+        description: Immutable baseline artifact retention
         required: false
+        type: number
         default: 90
 
-permissions:
-  contents: read
+permissions: {}
+
+concurrency:
+  group: visual-baseline-${{ github.repository_id }}-${{ github.sha }}
+  cancel-in-progress: false
 
 jobs:
-  baseline:
-    name: Publish visual baseline
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    # Newer pushes must NOT cancel a baseline publication that an open PR may
-    # need for its base SHA (plan Phase 5).
-    concurrency:
-      group: visual-baseline-${{ github.workflow }}-${{ github.sha }}
-      cancel-in-progress: false
-    container:
-      # Pinned Playwright runtime; Node inside this image is the toolchain.
-      image: mcr.microsoft.com/playwright:v1.61.1-noble@sha256:5b8f294aff9041b7191c34a4bab3ac270157a28774d4b0660e9743297b697e48
-    env:
-      # Package version paired with this workflow commit; both live on main and
-      # move together (GitHub-sourced installs, no npm registry).
-      EXPECTED_TOOLKIT_VERSION: '1.0.0'
-      TOOLKIT_PACKAGE_NAME: '@thisdot/visual-regression'
-      TOOLKIT_SOURCE_REPO: 'BrandonMathis/visual-regression-toolkit'
-    defaults:
-      run:
-        shell: bash
+  toolkit-identity:
+    name: Resolve reusable workflow main commit
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      id-token: write
+    outputs:
+      toolkit-commit: ${{ steps.identity.outputs.toolkit-commit }}
     steps:
-      - name: Check out caller repository
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-        with:
-          persist-credentials: false
-
-      - name: Verify toolkit source and version
-        run: |
-          set -euo pipefail
-          node --input-type=module - <<'SCRIPT'
-          import { readFileSync } from 'node:fs';
-          const name = process.env.TOOLKIT_PACKAGE_NAME;
-          const expected = process.env.EXPECTED_TOOLKIT_VERSION;
-          const repo = process.env.TOOLKIT_SOURCE_REPO;
-          const fail = (message) => {
-            console.error(`TOOLKIT_VERSION_MISMATCH: ${message}`);
-            process.exit(1);
-          };
-          // Accepted spec forms for a GitHub-sourced dependency:
-          //   github:owner/repo[#ref], owner/repo[#ref],
-          //   git+https://github.com/owner/repo(.git)[#ref]
-          const isToolkitSource = (spec) =>
-            typeof spec === 'string' &&
-            (spec === repo ||
-              spec.startsWith(`${repo}#`) ||
-              spec.startsWith(`github:${repo}`) ||
-              spec.includes(`github.com/${repo}`));
-          let pkg;
-          try {
-            pkg = JSON.parse(readFileSync('package.json', 'utf8'));
-          } catch {
-            fail('package.json is missing or unreadable in the caller repository');
-          }
-          const declared = [pkg.devDependencies?.[name], pkg.dependencies?.[name]].filter(
-            (v) => v !== undefined,
-          );
-          if (declared.length === 0) {
-            fail(`package.json does not declare ${name}; install it with: npm install --save-dev github:${repo}`);
-          }
-          for (const spec of declared) {
-            if (!isToolkitSource(spec)) {
-              fail(`package.json resolves ${name} from "${spec}"; expected the GitHub source github:${repo}`);
-            }
-          }
-          let lock;
-          try {
-            lock = JSON.parse(readFileSync('package-lock.json', 'utf8'));
-          } catch {
-            fail('package-lock.json is missing or unreadable; commit an npm lockfile');
-          }
-          const entries = [];
-          for (const [key, entry] of Object.entries(lock.packages ?? {})) {
-            if (key === `node_modules/${name}` || key.endsWith(`/node_modules/${name}`)) {
-              entries.push(entry ?? {});
-            }
-          }
-          if (entries.length === 0) {
-            fail(`package-lock.json does not resolve ${name}; run: npm install github:${repo}`);
-          }
-          for (const entry of entries) {
-            const resolved = entry.resolved ?? '';
-            if (!resolved.includes(`github.com/${repo}`)) {
-              fail(`package-lock.json resolves ${name} from "${resolved}"; expected git+https://github.com/${repo}`);
-            }
-            if (entry.version !== expected) {
-              fail(
-                `package-lock.json resolves ${name}@"${entry.version}" but this workflow pairs with ${expected}; ` +
-                  `refresh the git dependency: npm install github:${repo}`,
-              );
-            }
-          }
-          console.log(`Toolkit source OK: ${name}@${expected} from github.com/${repo}`);
-          SCRIPT
-
-      # One SHA and one logical date, resolved at job start (plan section 8.2).
-      - name: Resolve source identity and logical date
+      - name: Read the called workflow commit from GitHub's OIDC claim
         id: identity
+        shell: bash
         run: |
           set -euo pipefail
-          logical_date="$(date -u +%Y-%m-%d)"
-          {
-            echo "sha=${GITHUB_SHA}"
-            echo "sha12=${GITHUB_SHA:0:12}"
-            echo "logical-date=${logical_date}"
-          } >> "$GITHUB_OUTPUT"
-          # Default clock variable (plan section 8.2); the CLI injects the
-          # logical date into the configured clock variable for build, start,
-          # and capture, and this keeps every step of this job on one date.
-          echo "VISUAL_TEST_DATE=${logical_date}" >> "$GITHUB_ENV"
-          echo "Source SHA: ${GITHUB_SHA}"
-          echo "Logical date: ${logical_date}"
-
-      - name: Install dependencies
+          node <<'NODE'
+          const fs = require('node:fs');
+          void (async () => {
+            const url = `${process.env.ACTIONS_ID_TOKEN_REQUEST_URL}&audience=visual-regression-toolkit`;
+            const response = await fetch(url, {
+              headers: { Authorization: `Bearer ${process.env.ACTIONS_ID_TOKEN_REQUEST_TOKEN}` },
+            });
+            if (!response.ok) throw new Error(`OIDC token request failed: ${response.status}`);
+            const { value } = await response.json();
+            const payload = JSON.parse(Buffer.from(value.split('.')[1], 'base64url').toString('utf8'));
+            const expected = 'brandonmathis/visual-regression-toolkit/.github/workflows/visual-baseline.yml@refs/heads/main';
+            if (String(payload.job_workflow_ref).toLowerCase() !== expected ||
+                !/^[a-f0-9]{40}$/.test(String(payload.job_workflow_sha))) {
+              throw new Error('Called workflow is not the expected GitHub main workflow');
+            }
+            fs.appendFileSync(process.env.GITHUB_OUTPUT, `toolkit-commit=${payload.job_workflow_sha}\n`);
+          })().catch((error) => {
+            console.error(error instanceof Error ? error.message : String(error));
+            process.exitCode = 1;
+          });
+          NODE
+  publish:
+    name: Capture and publish exact-SHA baseline
+    needs: toolkit-identity
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    container:
+      image: mcr.microsoft.com/playwright:v1.61.1-noble@sha256:cf0daee9b994042e011bc29f20cdff1a9f682a039b43fcd738f7d8a9d3bcd9d6
+      options: --platform linux/amd64
+    env:
+      CONFIG_PATH: ${{ inputs.config-path }}
+      SOURCE_SHA: ${{ github.sha }}
+      DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+      EXPECTED_NODE: ${{ inputs.node-version }}
+      VISUAL_REGRESSION_AUTHORITATIVE: "1"
+      TOOLKIT_COMMIT: ${{ needs.toolkit-identity.outputs.toolkit-commit }}
+    steps:
+      - name: Validate immutable publication identity
+        shell: bash
         run: |
           set -euo pipefail
-          npm ci
-
-      - name: Compute visual-contract hash
-        id: confighash
-        env:
-          CONFIG_PATH: ${{ inputs.config-path }}
+          [[ "$SOURCE_SHA" =~ ^[a-f0-9]{40}$ ]]
+          [[ "$DEFAULT_BRANCH" =~ ^[A-Za-z0-9._/-]{1,255}$ ]]
+          [[ "${GITHUB_REF}" == "refs/heads/${DEFAULT_BRANCH}" ]]
+          [[ "$EXPECTED_NODE" == "22" ]]
+          [[ "$(node --version)" == v22.* ]]
+          [[ "$(uname -m)" == "x86_64" ]]
+          case "$CONFIG_PATH" in /*|*\\*|*..*) exit 1;; esac
+          [[ "$CONFIG_PATH" =~ ^[A-Za-z0-9._/-]{1,1024}$ ]]
+          date -u +'%Y-%m-%dT%H:%M:%S.000Z' > "$RUNNER_TEMP/logical-date"
+      - name: Load the toolkit from the called workflow commit
+        shell: bash
         run: |
           set -euo pipefail
-          hash="$(npx visual-regression config hash --config "$CONFIG_PATH")"
-          if ! [[ "$hash" =~ ^[0-9a-f]{16,}$ ]]; then
-            echo "Unexpected visual-contract hash output" >&2
-            exit 1
-          fi
-          {
-            echo "hash=${hash}"
-            echo "hash12=${hash:0:12}"
-          } >> "$GITHUB_OUTPUT"
-          echo "Visual-contract hash: ${hash}"
-
-      - name: Create baseline
-        env:
-          CONFIG_PATH: ${{ inputs.config-path }}
-        run: |
-          set -euo pipefail
-          npx visual-regression baseline create --config "$CONFIG_PATH" --json
-
-      # Separate process: the manifest and checksums must verify independently
-      # of the process that produced them (plan section 8.2).
-      - name: Verify baseline
-        run: |
-          set -euo pipefail
-          npx visual-regression baseline verify .visual-regression/baseline
-
-      # The job reports success only after this immutable upload succeeds
-      # (plan section 10); any later step failure still fails the job.
-      - name: Upload baseline artifact
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+          export GIT_TERMINAL_PROMPT=0
+          : > "$RUNNER_TEMP/empty-npmrc"
+          mkdir -p "$RUNNER_TEMP/toolkit-source"
+          git -C "$RUNNER_TEMP/toolkit-source" init
+          git -C "$RUNNER_TEMP/toolkit-source" remote add origin https://github.com/BrandonMathis/visual-regression-toolkit.git
+          # shellcheck disable=SC2153
+          git -C "$RUNNER_TEMP/toolkit-source" fetch --depth 1 origin "$TOOLKIT_COMMIT"
+          git -C "$RUNNER_TEMP/toolkit-source" checkout --detach FETCH_HEAD
+          toolkit_commit="$(git -C "$RUNNER_TEMP/toolkit-source" rev-parse HEAD)"
+          [[ "$toolkit_commit" == "$TOOLKIT_COMMIT" ]]
+          NPM_CONFIG_USERCONFIG="$RUNNER_TEMP/empty-npmrc" npm ci --prefix "$RUNNER_TEMP/toolkit-source" --ignore-scripts --no-audit --no-fund
+          npm run build --prefix "$RUNNER_TEMP/toolkit-source"
+          printf 'VISUAL_REGRESSION_TOOLKIT_COMMIT=%s\n' "$toolkit_commit" >> "$GITHUB_ENV"
+      - name: Check out the default-branch source SHA
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
-          name: visual-baseline-${{ steps.identity.outputs.sha12 }}-${{ steps.confighash.outputs.hash12 }}-${{ github.run_id }}-${{ github.run_attempt }}
-          path: .visual-regression/baseline/**
-          include-hidden-files: true
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+          clean: true
+          submodules: false
+          lfs: false
+      - name: Verify checked-out consumer source
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$(git rev-parse HEAD)" == "$SOURCE_SHA" ]]
+      - name: Install consumer dependencies without credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          : > "$RUNNER_TEMP/empty-npmrc"
+          NPM_CONFIG_USERCONFIG="$RUNNER_TEMP/empty-npmrc" npm ci --no-audit --no-fund
+      - name: Verify toolkit main and compute contract
+        id: identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          CLI="$RUNNER_TEMP/toolkit-source/dist/cli/main.js"
+          test -f "$CLI"
+          value="$(node "$CLI" workflow inspect-consumer --root "$GITHUB_WORKSPACE" --config "$CONFIG_PATH")"
+          contract="$(printf '%s' "$value" | jq -er '.contractHash | select(test("^[a-f0-9]{64}$"))')"
+          {
+            printf 'contract=%s\n' "$contract"
+            printf 'logical-date=%s\n' "$(cat "$RUNNER_TEMP/logical-date")"
+            printf 'artifact-name=visual-baseline-%s-%s-%s-%s\n' "${SOURCE_SHA:0:12}" "${contract:0:12}" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT"
+          } >> "$GITHUB_OUTPUT"
+      - name: Create baseline and preserve CLI exit
+        id: capture
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf .visual-regression playwright-report/visual test-results/visual
+          CLI="$RUNNER_TEMP/toolkit-source/dist/cli/main.js"
+          set +e
+          node "$CLI" baseline create --json --config "$CONFIG_PATH" --repository "$GITHUB_REPOSITORY" --source-sha "$SOURCE_SHA" --base-sha "$SOURCE_SHA" --base-branch "$DEFAULT_BRANCH" --run-id "$GITHUB_RUN_ID" --run-attempt "$GITHUB_RUN_ATTEMPT" --logical-date "${{ steps.identity.outputs.logical-date }}"
+          code=$?
+          set -e
+          printf 'exit-code=%s\n' "$code" >> "$GITHUB_OUTPUT"
+      - name: Verify completed baseline in a fresh process
+        if: steps.capture.outputs.exit-code == '0'
+        shell: bash
+        run: |
+          set -euo pipefail
+          CLI="$RUNNER_TEMP/toolkit-source/dist/cli/main.js"
+          node "$CLI" baseline verify .visual-regression/baseline --json > "$RUNNER_TEMP/baseline-verification.json"
+          node "$CLI" workflow scan-tree --path .visual-regression/baseline > "$RUNNER_TEMP/baseline-tree.json"
+      - name: Validate result and trusted summary
+        id: gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          CLI="$RUNNER_TEMP/toolkit-source/dist/cli/main.js"
+          value="$(node "$CLI" workflow validate-result --root "$GITHUB_WORKSPACE" --operation baseline-create --exit-code "${{ steps.capture.outputs.exit-code }}" --candidate-sha "$SOURCE_SHA" --contract-hash "${{ steps.identity.outputs.contract }}" --summary "$RUNNER_TEMP/visual-summary.md" --informational false)"
+          [[ "$(printf '%s' "$value" | jq -er .conclusion)" == "success" ]]
+          printf 'conclusion=success\n' >> "$GITHUB_OUTPUT"
+      - name: Upload immutable baseline
+        id: baseline-upload
+        if: steps.gate.outputs.conclusion == 'success'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ${{ steps.identity.outputs.artifact-name }}
+          path: .visual-regression/baseline
           if-no-files-found: error
           retention-days: ${{ inputs.retention-days }}
-
-      - name: Write job summary
-        env:
-          SOURCE_SHA: ${{ steps.identity.outputs.sha }}
-          CONTRACT_HASH: ${{ steps.confighash.outputs.hash }}
-          LOGICAL_DATE: ${{ steps.identity.outputs.logical-date }}
+          compression-level: 0
+          overwrite: false
+          include-hidden-files: true
+      - name: Pre-scan bounded baseline diagnostics
+        id: diagnostics-scan
+        if: always()
+        continue-on-error: true
+        shell: bash
         run: |
           set -euo pipefail
-          counts="$(node --input-type=module - <<'SCRIPT'
-          import { readFileSync } from 'node:fs';
-          const result = JSON.parse(
-            readFileSync('.visual-regression/result/visual-result.json', 'utf8'),
-          );
-          console.log(`${result.totals.routes} routes | ${result.totals.screenshots} screenshots`);
-          SCRIPT
-          )"
-          {
-            echo '## Visual baseline published'
-            echo ''
-            echo "- Source SHA: \`${SOURCE_SHA}\`"
-            echo "- Visual-contract hash: \`${CONTRACT_HASH}\`"
-            echo "- Logical date: \`${LOGICAL_DATE}\`"
-            echo "- Totals: ${counts}"
-            echo ''
-          } >> "$GITHUB_STEP_SUMMARY"
-          if [ -f .visual-regression/result/visual-summary.md ]; then
-            head -c 65536 .visual-regression/result/visual-summary.md >> "$GITHUB_STEP_SUMMARY"
-            echo '' >> "$GITHUB_STEP_SUMMARY"
+          CLI="$RUNNER_TEMP/toolkit-source/dist/cli/main.js"
+          for directory in .visual-regression/result playwright-report/visual test-results/visual; do
+            if [[ -d "$directory" ]]; then node "$CLI" workflow scan-tree --path "$directory"; fi
+          done
+      - name: Upload bounded baseline diagnostics
+        if: always() && steps.diagnostics-scan.outcome == 'success'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: visual-baseline-diagnostics-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            .visual-regression/result
+            playwright-report/visual
+            test-results/visual
+          if-no-files-found: warn
+          retention-days: 14
+          compression-level: 6
+          overwrite: false
+          include-hidden-files: true
+      - name: Publish trusted failure summary
+        if: always() && steps.gate.outcome == 'failure'
+        shell: bash
+        run: |
+          if [[ -f "$RUNNER_TEMP/visual-summary.md" ]]; then
+            cat "$RUNNER_TEMP/visual-summary.md" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo '## Visual baseline infrastructure error' >> "$GITHUB_STEP_SUMMARY"
           fi
+      - name: Publish trusted job summary
+        if: always() && steps.gate.outputs.conclusion == 'success'
+        env:
+          ARTIFACT_ID: ${{ steps.baseline-upload.outputs.artifact-id }}
+          ARTIFACT_DIGEST: ${{ steps.baseline-upload.outputs.artifact-digest }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat "$RUNNER_TEMP/visual-summary.md" >> "$GITHUB_STEP_SUMMARY"
+          printf "\n**Published artifact ID:** \`%s\`  \n**Artifact digest:** \`%s\`\n" "$ARTIFACT_ID" "$ARTIFACT_DIGEST" >> "$GITHUB_STEP_SUMMARY"
+          test -n "$ARTIFACT_ID"
+          [[ "$ARTIFACT_DIGEST" =~ ^sha256:[a-f0-9]{64}$ ]]

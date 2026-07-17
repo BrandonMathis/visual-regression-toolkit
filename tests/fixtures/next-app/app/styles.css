@@ -1,0 +1,32 @@
+* {
+  box-sizing: border-box;
+}
+html,
+body {
+  margin: 0;
+  font-family: Arial, sans-serif;
+  color: #102030;
+  background: #f8fafc;
+}
+main {
+  min-height: 1800px;
+  padding: 48px;
+}
+.animated {
+  animation: pulse 800ms infinite alternate;
+}
+.spacer {
+  height: 1200px;
+  background: linear-gradient(#e8eef4, #f8fafc);
+}
+[data-visual-mask] {
+  display: inline-block;
+  padding: 8px;
+  background: #ffd166;
+}
+@keyframes pulse {
+  to {
+    opacity: 0.3;
+    transform: translateX(4px);
+  }
+}

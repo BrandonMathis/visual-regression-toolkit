@@ -1,77 +1,31 @@
-# @thisdot/visual-regression
+# Shared Visual Regression Toolkit
 
-A shared visual-regression toolkit for Next.js websites. One repository owns all of the generic
-machinery — configuration loading and hashing, prerender route discovery, deterministic Chromium
-capture, artifact-backed baselines, comparison, and reporting — so that a consumer repository adds
-only:
+Deterministic Chromium visual regression for statically prerendered Next.js routes. The toolkit owns configuration, route discovery, production-server lifecycle, isolated Playwright capture, verified manifests, pixel comparison, and reports.
 
-- one declarative config file (`visual-regression.config.ts`);
-- one GitHub-sourced dev dependency (`@thisdot/visual-regression`, installed from this
-  repository); and
-- two thin GitHub Actions workflow callers.
+## Distribution model
 
-Consumers never copy a Playwright visual spec, reporter, Docker runner, or baseline orchestration.
+This project is **not published to npm**. Consumers use the repository directly from GitHub:
 
-Version 1 is deliberately small: Next.js prerendered routes only, Chromium only, full-page
-screenshots on three viewport projects (desktop, tablet, phone), baselines stored as immutable
-GitHub Actions artifacts in the consumer repository, and pull-request comparison against the exact
-baseline for the PR's base commit.
+- reusable workflows reference `BrandonMathis/visual-regression-toolkit/.github/workflows/...@main`;
+- each workflow run loads the toolkit source from the commit currently at `main`, installs its locked dependencies, and builds the CLI;
+- a clean job reads the reusable workflow's resolved commit from GitHub's `job_workflow_sha` OIDC claim before consumer code runs;
+- the selected toolkit commit is recorded in baseline and result metadata; and
+- optional Git tags are human-managed Git markers only. Tags do not publish packages or create a separate release channel.
 
-## Architecture
+`main` is intentionally a moving channel. A toolkit change that affects runtime compatibility requires consumers to publish a fresh baseline before comparisons can resume. Third-party GitHub Actions and the Playwright container remain pinned immutably inside the shared workflows.
 
-```text
-consumer repository
-├── visual-regression.config.ts
-├── package.json                         # github:BrandonMathis/visual-regression-toolkit dependency
-└── .github/workflows/
-    ├── visual-baseline.yml              # thin reusable-workflow caller
-    └── visual-regression.yml            # thin reusable-workflow caller
-             │
-             ▼
-visual-regression-toolkit (this repository)
-├── src/                                 # config, discovery, capture, baseline, result, reporters, CLI
-├── schemas/                             # baseline-manifest and visual-result JSON Schemas
-├── .github/workflows/                   # reusable visual-baseline.yml and visual-regression.yml
-└── docs/
-```
+## Requirements
 
-The package builds and starts the consumer app, discovers prerendered routes from
-`.next/prerender-manifest.json`, generates its own isolated Playwright suite (it never touches a
-consumer's functional Playwright setup), stabilizes each page, captures screenshots, and creates or
-compares against a checksummed baseline manifest. The reusable workflows run everything in one
-pinned Playwright Linux container, publish baselines as immutable artifacts, and resolve the exact
-baseline for a pull request's base SHA — never a stale, newer, ancestor, or committed screenshot.
+- Consumer applications run on Node.js 22.
+- Authoritative captures use `@playwright/test@1.61.1` in `linux/amd64` container `mcr.microsoft.com/playwright:v1.61.1-noble@sha256:cf0daee9b994042e011bc29f20cdff1a9f682a039b43fcd738f7d8a9d3bcd9d6`.
+- Consumer repositories need no visual-regression npm dependency and no copied Playwright visual test.
 
-See [docs/architecture.md](docs/architecture.md) for the full responsibility split, determinism
-model, baseline identity, result contract, and security model.
+Host captures require `--host`, emit a warning, and are diagnostic only. They cannot verify or replace authoritative CI baselines.
 
-## Quickstart
+## Consumer setup
 
-Full guide: [docs/installation.md](docs/installation.md).
-
-1. Install the package directly from GitHub (there is no npm registry publication — the toolkit
-   is consumed from whatever is on `main`; the lockfile pins the exact commit you installed):
-
-   ```bash
-   npm install --save-dev github:BrandonMathis/visual-regression-toolkit
-   ```
-
-2. Create `visual-regression.config.ts`:
-
-   ```ts
-   import { defineVisualConfig } from '@thisdot/visual-regression';
-
-   export default defineVisualConfig({
-     framework: { type: 'next-prerender' },
-     commands: {
-       build: 'npm run build',
-       start: 'npm run start -- --hostname 127.0.0.1',
-     },
-     server: { origin: 'http://127.0.0.1:3000' },
-   });
-   ```
-
-3. Ignore generated output:
+1. Add a plain `visual-regression.config.ts` as described in [configuration](docs/configuration.md). It does not import an npm package.
+2. Ignore generated output:
 
    ```gitignore
    /.visual-regression/
@@ -79,52 +33,56 @@ Full guide: [docs/installation.md](docs/installation.md).
    /test-results/visual/
    ```
 
-4. Add the two workflow callers (`visual-baseline.yml` and `visual-regression.yml`) referencing
-   this repository's reusable workflows at `@main` — exact YAML in
-   [docs/installation.md](docs/installation.md).
+3. Add the thin [baseline and comparison workflow callers](docs/workflows.md), both referencing `@main`.
+4. Seed the first baseline on the default branch before making comparison a required check.
 
-5. Merge to the default branch, let the baseline workflow publish the first baseline, then open a
-   PR to see the comparison run.
+A no-change PR should pass, an intentional CSS change should yield a downloadable advisory diff, and build or infrastructure failures remain blocking.
 
-## CLI
+## Local diagnostic CLI
 
-The package installs one binary, `visual-regression`. The reusable workflows invoke it directly.
+Clone the toolkit and build it once:
 
-| Command                                      | Purpose                                                                                                                           |
-| -------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| `visual-regression baseline create`          | Build, start, discover routes, capture every route/project pair, create a complete baseline manifest, and verify it.              |
-| `visual-regression baseline verify <dir>`    | Validate a baseline directory: manifest identity, compatibility metadata, paths, dimensions, and SHA-256 checksums.               |
-| `visual-regression compare --baseline <dir>` | Build and capture a candidate, verify the baseline, compare all route/project pairs (changed, added, removed), and write results. |
-| `visual-regression report`                   | Print or open the latest HTML report.                                                                                             |
-| `visual-regression config hash`              | Print the normalized visual-contract hash for the loaded config; used by workflows for exact baseline lookup.                     |
+```sh
+git clone https://github.com/BrandonMathis/visual-regression-toolkit.git
+cd visual-regression-toolkit
+npm ci --ignore-scripts
+npm run build
+```
 
-Common flags: `--config <path>` (config file location), `--json` (machine-readable stdout; logs go
-to stderr), and `--host` for diagnostic-only host execution — host screenshots are never
-authoritative or CI-comparable.
+From a consumer repository, invoke the built CLI by path:
 
-## Statuses and exit codes
+```sh
+node /path/to/visual-regression-toolkit/dist/cli/main.js baseline create --host
+node /path/to/visual-regression-toolkit/dist/cli/main.js baseline verify .visual-regression/baseline
+node /path/to/visual-regression-toolkit/dist/cli/main.js compare --baseline .visual-regression/baseline --host
+node /path/to/visual-regression-toolkit/dist/cli/main.js report
+```
 
-Every `baseline create` and `compare` run writes a schema-validated
-`.visual-regression/result/visual-result.json` and `visual-summary.md`.
-
-| Status                 | Exit | Meaning                                                                                                               |
-| ---------------------- | ---: | --------------------------------------------------------------------------------------------------------------------- |
-| `pass`                 |  `0` | `baseline-create` produced a complete verified baseline, or `compare` completed with no differences.                  |
-| `infrastructure-error` |  `1` | The requested operation could not complete or cannot be trusted. Always fails the workflow.                           |
-| `visual-diff`          |  `2` | A complete, verified `compare` found changed, added, or removed route/project screenshots. Advisory in CI by default. |
-
-`visual-diff` is valid only for `compare`; exit `2` never represents an incomplete comparison,
-missing baseline, or setup failure. Stable error codes (for example `BASELINE_NOT_FOUND`,
-`VISUAL_CONTRACT_CHANGED`, `TOOLKIT_VERSION_MISMATCH`) are documented with operator responses in
-[docs/operations.md](docs/operations.md).
+Capture commands accept `--config <relative-path>` and `--json`. Exit `0` is pass, `1` is infrastructure error, and `2` is a complete visual difference. Only the trusted workflow gate may turn a validated exit `2` into advisory success.
 
 ## Documentation
 
-- [docs/installation.md](docs/installation.md) — full consumer setup: package, config, gitignore,
-  workflow callers, and seed-and-verify steps.
-- [docs/operations.md](docs/operations.md) — baseline lifecycle, retrieval failure codes and what
-  to do about them, config-changing PRs, upgrades and rollback, intentional visual changes.
-- [docs/architecture.md](docs/architecture.md) — responsibility split, determinism model, baseline
-  identity, result contract, workflow security model.
-- [docs/release.md](docs/release.md) — distribution from GitHub, runtime coupling (package,
-  workflows, Playwright, Chromium, container, schemas), and optional git tags.
+- [Configuration reference](docs/configuration.md)
+- [CLI and outputs](docs/cli.md)
+- [Reusable workflows and consumer caller examples](docs/workflows.md)
+- [Baseline lifecycle and main-channel updates](docs/baseline-lifecycle.md)
+- [Errors and troubleshooting](docs/errors.md)
+- [Fixture application](tests/fixtures/next-app/README.md)
+
+## Development
+
+```sh
+npm ci --ignore-scripts
+npm run format:check
+npm run lint
+npm run typecheck
+npm test
+npm run test:integration
+npm run test:e2e
+npm run check:schemas
+npm run build
+npm run check:package
+npm run check:workflows
+```
+
+`npm pack` remains a repository-local smoke test for package boundaries; its output is not published. Pushing a Git tag runs validation only. See [SECURITY.md](SECURITY.md) for the trust boundary and private reporting process.

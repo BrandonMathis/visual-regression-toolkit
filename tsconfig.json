@@ -1,29 +1,23 @@
 {
   "compilerOptions": {
-    "target": "ES2023",
-    "lib": ["ES2023", "DOM"],
+    "target": "ES2022",
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
     "strict": true,
     "noUncheckedIndexedAccess": true,
-    "noImplicitOverride": true,
-    "noFallthroughCasesInSwitch": true,
+    "exactOptionalPropertyTypes": true,
     "verbatimModuleSyntax": true,
-    "esModuleInterop": true,
     "resolveJsonModule": true,
+    "esModuleInterop": true,
     "skipLibCheck": true,
-    "declaration": true,
-    "sourceMap": false,
-    "outDir": "dist",
     "types": ["node"]
   },
   "include": [
     "src",
-    "tests/unit",
-    "tests/integration",
-    "tests/e2e",
+    "scripts",
+    "tests",
     "vitest.config.ts",
     "eslint.config.js"
   ],
-  "exclude": ["tests/fixtures"]
+  "exclude": ["tests/fixtures/**"]
 }

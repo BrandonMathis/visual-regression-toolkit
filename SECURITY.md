@@ -1,47 +1,15 @@
-# Security Policy
+# Security policy
+
+## Supported source
+
+The current `main` branch is the only supported distribution channel. The toolkit is not published to npm and Git tags are historical markers, not independently maintained release lines. Security fixes land on `main`; consumers receive them on their next workflow run and must publish fresh baselines when runtime identity changes.
 
 ## Reporting a vulnerability
 
-Please report suspected vulnerabilities privately through GitHub private
-vulnerability reporting on this repository ("Report a vulnerability" under the
-Security tab). Do not open a public issue for security reports. You should
-receive an acknowledgment within five business days.
+Do not open a public issue. Use GitHub's **Security → Report a vulnerability** private advisory for this repository. Include the affected toolkit Git commit, impact, reproduction, and whether a consumer pull request can trigger the issue. Maintainers will acknowledge a complete report within five business days and coordinate disclosure after a fix is available.
 
-Please include the affected package version or workflow commit SHA, steps to
-reproduce, and the impact you believe the issue has.
+Never include production credentials, signed artifact URLs, or private consumer source in a report.
 
-## Security model
+## Trust boundary
 
-The toolkit treats every job that installs dependencies, loads consumer
-configuration, builds the application, starts the server, or runs the browser
-as executing untrusted code. Those jobs:
-
-- run with `contents: read` and only the minimum `actions: read` needed for
-  baseline retrieval;
-- check out code with `persist-credentials: false`;
-- receive no repository, organization, deployment, or PR-write secrets and
-  never use `secrets: inherit`;
-- never execute pull-request code via `pull_request_target`;
-- install the public, tokenless toolkit package;
-- clear result directories before execution;
-- invoke the exact toolkit CLI directly rather than a PR-editable consumer
-  script; and
-- upload only fixed, documented artifact paths with bounded retention and
-  size limits.
-
-Version 1 posts no PR comments, so no job needs `pull-requests: write`.
-
-Shared repository controls:
-
-- `main` and release tags are protected and never rewritten;
-- CODEOWNERS review is required for workflows, schemas, and releases;
-- all third-party actions are pinned to reviewed full commit SHAs;
-- CI runs dependency review, `actionlint`, and `zizmor`; and
-- the package is consumed directly from this GitHub repository — there is no
-  npm registry publication and no publish credential of any kind.
-
-The package and the reusable workflows move together on `main`, coupled with
-Node major, Playwright and Chromium versions, the container digest, and schema
-versions; the workflows verify the consumer's locked install matches the
-version they embed. Consumers who pin a git tag keep the dependency ref and
-the workflow ref on the same tag.
+Consumer dependency installation, configuration loading, builds, servers, and browser pages execute untrusted code on disposable GitHub-hosted runners. Those jobs receive no secrets, write token, environment, or OIDC permission. A separate clean job receives `id-token: write` solely to read GitHub's signed reusable-workflow commit claim before any consumer code executes. Artifacts are evidence, not hostile-code attestation, and must never contain secrets.

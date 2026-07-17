@@ -1,14 +1,17 @@
 {
-  "name": "visual-regression-fixture-next-app",
+  "name": "visual-regression-next-fixture",
   "version": "0.0.0",
   "private": true,
   "scripts": {
     "build": "next build",
-    "start": "next start"
+    "start": "next start --hostname 127.0.0.1"
   },
   "dependencies": {
-    "next": "16.2.10",
-    "react": "19.2.7",
-    "react-dom": "19.2.7"
+    "next": "15.5.20",
+    "react": "19.1.0",
+    "react-dom": "19.1.0"
+  },
+  "devDependencies": {
+    "@types/react": "19.2.17"
   }
 }

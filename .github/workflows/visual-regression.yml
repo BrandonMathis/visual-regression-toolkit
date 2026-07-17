@@ -1,497 +1,430 @@
-# Reusable pull-request comparison workflow (plan Phase 5, sections 9-12, 14).
-# Consumers call this by full commit SHA:
-#   uses: BrandonMathis/visual-regression-toolkit/.github/workflows/visual-regression.yml@<full-sha>
-name: Visual Regression (Reusable)
+name: Reusable visual regression
 
 on:
   workflow_call:
     inputs:
       config-path:
-        description: 'Path to the visual regression config file in the caller repository.'
-        type: string
+        description: Repository-relative visual configuration path
         required: false
-        default: 'visual-regression.config.ts'
+        type: string
+        default: visual-regression.config.ts
       baseline-workflow-file:
-        description: 'File name of the caller workflow that publishes baselines.'
-        type: string
+        description: Baseline caller workflow filename in the consumer repository
         required: false
-        default: 'visual-baseline.yml'
+        type: string
+        default: visual-baseline.yml
       node-version:
-        description: 'Node.js major version expected by the toolkit (informational; the pinned container provides the runtime).'
+        description: Supported Node major; only 22 is accepted
+        required: false
         type: string
-        required: false
-        default: '22'
+        default: "22"
       visual-diffs-are-informational:
-        description: 'When true, a schema-valid visual-diff result is converted to an advisory success.'
-        type: boolean
+        description: Convert only a fully validated visual difference to advisory success
         required: false
+        type: boolean
         default: true
 
-permissions:
-  actions: read
-  contents: read
+permissions: {}
+
+concurrency:
+  group: visual-compare-${{ github.repository_id }}-${{ github.event.pull_request.number }}-${{ github.event.pull_request.base.sha }}-${{ github.event.pull_request.head.sha }}
+  cancel-in-progress: true
 
 jobs:
-  compare:
-    name: Compare against baseline
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-    container:
-      # Pinned Playwright runtime; Node inside this image is the toolchain.
-      image: mcr.microsoft.com/playwright:v1.61.1-noble@sha256:5b8f294aff9041b7191c34a4bab3ac270157a28774d4b0660e9743297b697e48
-    env:
-      # Package version paired with this workflow commit; both live on main and
-      # move together (GitHub-sourced installs, no npm registry).
-      EXPECTED_TOOLKIT_VERSION: '1.0.0'
-      TOOLKIT_PACKAGE_NAME: '@thisdot/visual-regression'
-      TOOLKIT_SOURCE_REPO: 'BrandonMathis/visual-regression-toolkit'
-      # Baseline download lands OUTSIDE the generated .visual-regression/ tree.
-      BASELINE_DOWNLOAD_DIR: '.visual-baseline-download'
-    defaults:
-      run:
-        shell: bash
+  toolkit-identity:
+    name: Resolve reusable workflow main commit
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      id-token: write
+    outputs:
+      toolkit-commit: ${{ steps.identity.outputs.toolkit-commit }}
     steps:
-      # Default pull_request checkout: the PR merge ref.
-      - name: Check out pull request merge ref
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-        with:
-          persist-credentials: false
-
-      - name: Verify toolkit source and version
-        run: |
-          set -euo pipefail
-          node --input-type=module - <<'SCRIPT'
-          import { readFileSync } from 'node:fs';
-          const name = process.env.TOOLKIT_PACKAGE_NAME;
-          const expected = process.env.EXPECTED_TOOLKIT_VERSION;
-          const repo = process.env.TOOLKIT_SOURCE_REPO;
-          const fail = (message) => {
-            console.error(`TOOLKIT_VERSION_MISMATCH: ${message}`);
-            process.exit(1);
-          };
-          // Accepted spec forms for a GitHub-sourced dependency:
-          //   github:owner/repo[#ref], owner/repo[#ref],
-          //   git+https://github.com/owner/repo(.git)[#ref]
-          const isToolkitSource = (spec) =>
-            typeof spec === 'string' &&
-            (spec === repo ||
-              spec.startsWith(`${repo}#`) ||
-              spec.startsWith(`github:${repo}`) ||
-              spec.includes(`github.com/${repo}`));
-          let pkg;
-          try {
-            pkg = JSON.parse(readFileSync('package.json', 'utf8'));
-          } catch {
-            fail('package.json is missing or unreadable in the caller repository');
-          }
-          const declared = [pkg.devDependencies?.[name], pkg.dependencies?.[name]].filter(
-            (v) => v !== undefined,
-          );
-          if (declared.length === 0) {
-            fail(`package.json does not declare ${name}; install it with: npm install --save-dev github:${repo}`);
-          }
-          for (const spec of declared) {
-            if (!isToolkitSource(spec)) {
-              fail(`package.json resolves ${name} from "${spec}"; expected the GitHub source github:${repo}`);
-            }
-          }
-          let lock;
-          try {
-            lock = JSON.parse(readFileSync('package-lock.json', 'utf8'));
-          } catch {
-            fail('package-lock.json is missing or unreadable; commit an npm lockfile');
-          }
-          const entries = [];
-          for (const [key, entry] of Object.entries(lock.packages ?? {})) {
-            if (key === `node_modules/${name}` || key.endsWith(`/node_modules/${name}`)) {
-              entries.push(entry ?? {});
-            }
-          }
-          if (entries.length === 0) {
-            fail(`package-lock.json does not resolve ${name}; run: npm install github:${repo}`);
-          }
-          for (const entry of entries) {
-            const resolved = entry.resolved ?? '';
-            if (!resolved.includes(`github.com/${repo}`)) {
-              fail(`package-lock.json resolves ${name} from "${resolved}"; expected git+https://github.com/${repo}`);
-            }
-            if (entry.version !== expected) {
-              fail(
-                `package-lock.json resolves ${name}@"${entry.version}" but this workflow pairs with ${expected}; ` +
-                  `refresh the git dependency: npm install github:${repo}`,
-              );
-            }
-          }
-          console.log(`Toolkit source OK: ${name}@${expected} from github.com/${repo}`);
-          SCRIPT
-
-      - name: Install dependencies
-        run: |
-          set -euo pipefail
-          npm ci
-
-      # Read the base SHA exactly once at job start (plan section 9).
-      - name: Resolve pull request identity
+      - name: Read the called workflow commit from GitHub's OIDC claim
         id: identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          node <<'NODE'
+          const fs = require('node:fs');
+          void (async () => {
+            const url = `${process.env.ACTIONS_ID_TOKEN_REQUEST_URL}&audience=visual-regression-toolkit`;
+            const response = await fetch(url, {
+              headers: { Authorization: `Bearer ${process.env.ACTIONS_ID_TOKEN_REQUEST_TOKEN}` },
+            });
+            if (!response.ok) throw new Error(`OIDC token request failed: ${response.status}`);
+            const { value } = await response.json();
+            const payload = JSON.parse(Buffer.from(value.split('.')[1], 'base64url').toString('utf8'));
+            const expected = 'brandonmathis/visual-regression-toolkit/.github/workflows/visual-regression.yml@refs/heads/main';
+            if (String(payload.job_workflow_ref).toLowerCase() !== expected ||
+                !/^[a-f0-9]{40}$/.test(String(payload.job_workflow_sha))) {
+              throw new Error('Called workflow is not the expected GitHub main workflow');
+            }
+            fs.appendFileSync(process.env.GITHUB_OUTPUT, `toolkit-commit=${payload.job_workflow_sha}\n`);
+          })().catch((error) => {
+            console.error(error instanceof Error ? error.message : String(error));
+            process.exitCode = 1;
+          });
+          NODE
+  identity:
+    name: Validate candidate identity and contract
+    needs: toolkit-identity
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    container:
+      image: mcr.microsoft.com/playwright:v1.61.1-noble@sha256:cf0daee9b994042e011bc29f20cdff1a9f682a039b43fcd738f7d8a9d3bcd9d6
+      options: --platform linux/amd64
+    outputs:
+      base-sha: ${{ steps.context.outputs.base-sha }}
+      head-sha: ${{ steps.context.outputs.head-sha }}
+      merge-sha: ${{ steps.context.outputs.merge-sha }}
+      base-branch: ${{ steps.context.outputs.base-branch }}
+      repository-id: ${{ steps.context.outputs.repository-id }}
+      contract: ${{ steps.contract.outputs.contract }}
+    env:
+      CONFIG_PATH: ${{ inputs.config-path }}
+      EXPECTED_NODE: ${{ inputs.node-version }}
+      TOOLKIT_COMMIT: ${{ needs.toolkit-identity.outputs.toolkit-commit }}
+    steps:
+      - name: Capture immutable pull request identity
+        id: context
         env:
+          EVENT_NAME: ${{ github.event_name }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          MERGE_SHA: ${{ github.sha }}
+          BASE_BRANCH: ${{ github.event.pull_request.base.ref }}
+          REPOSITORY_ID: ${{ github.repository_id }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        shell: bash
         run: |
           set -euo pipefail
-          if [ -z "$BASE_SHA" ] || [ -z "$HEAD_SHA" ]; then
-            echo 'This reusable workflow must be called from a pull_request event' >&2
-            exit 1
-          fi
-          {
-            echo "base-sha=${BASE_SHA}"
-            echo "base-sha12=${BASE_SHA:0:12}"
-            echo "head-sha=${HEAD_SHA}"
-            echo "merge-sha=${GITHUB_SHA}"
-          } >> "$GITHUB_OUTPUT"
-          echo "Base SHA: ${BASE_SHA}"
-          echo "Head SHA: ${HEAD_SHA}"
-          echo "Merge SHA: ${GITHUB_SHA}"
-
-      - name: Compute candidate visual-contract hash
-        id: confighash
+          [[ "$EVENT_NAME" == "pull_request" ]]
+          [[ "$BASE_SHA" =~ ^[a-f0-9]{40}$ && "$HEAD_SHA" =~ ^[a-f0-9]{40}$ && "$MERGE_SHA" =~ ^[a-f0-9]{40}$ ]]
+          [[ "$REPOSITORY_ID" =~ ^[1-9][0-9]*$ && "$PR_NUMBER" =~ ^[1-9][0-9]*$ ]]
+          [[ "$BASE_BRANCH" =~ ^[A-Za-z0-9._/-]{1,255}$ ]]
+          [[ "$EXPECTED_NODE" == "22" && "$(node --version)" == v22.* && "$(uname -m)" == x86_64 ]]
+          case "$CONFIG_PATH" in /*|*\\*|*..*) exit 1;; esac
+          [[ "$CONFIG_PATH" =~ ^[A-Za-z0-9._/-]{1,1024}$ ]]
+          printf 'base-sha=%s\nhead-sha=%s\nmerge-sha=%s\nbase-branch=%s\nrepository-id=%s\n' "$BASE_SHA" "$HEAD_SHA" "$MERGE_SHA" "$BASE_BRANCH" "$REPOSITORY_ID" >> "$GITHUB_OUTPUT"
+      - name: Load the toolkit from the called workflow commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          export GIT_TERMINAL_PROMPT=0
+          : > "$RUNNER_TEMP/empty-npmrc"
+          mkdir -p "$RUNNER_TEMP/toolkit-source"
+          git -C "$RUNNER_TEMP/toolkit-source" init
+          git -C "$RUNNER_TEMP/toolkit-source" remote add origin https://github.com/BrandonMathis/visual-regression-toolkit.git
+          # shellcheck disable=SC2153
+          git -C "$RUNNER_TEMP/toolkit-source" fetch --depth 1 origin "$TOOLKIT_COMMIT"
+          git -C "$RUNNER_TEMP/toolkit-source" checkout --detach FETCH_HEAD
+          toolkit_commit="$(git -C "$RUNNER_TEMP/toolkit-source" rev-parse HEAD)"
+          [[ "$toolkit_commit" == "$TOOLKIT_COMMIT" ]]
+          NPM_CONFIG_USERCONFIG="$RUNNER_TEMP/empty-npmrc" npm ci --prefix "$RUNNER_TEMP/toolkit-source" --ignore-scripts --no-audit --no-fund
+          npm run build --prefix "$RUNNER_TEMP/toolkit-source"
+          printf 'VISUAL_REGRESSION_TOOLKIT_COMMIT=%s\n' "$toolkit_commit" >> "$GITHUB_ENV"
+      - name: Check out the synthetic merge commit
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 2
+          persist-credentials: false
+          clean: true
+          submodules: false
+          lfs: false
+      - name: Verify merge parents
         env:
-          CONFIG_PATH: ${{ inputs.config-path }}
+          BASE_SHA: ${{ steps.context.outputs.base-sha }}
+          HEAD_SHA: ${{ steps.context.outputs.head-sha }}
+          MERGE_SHA: ${{ steps.context.outputs.merge-sha }}
+        shell: bash
         run: |
           set -euo pipefail
-          hash="$(npx visual-regression config hash --config "$CONFIG_PATH")"
-          if ! [[ "$hash" =~ ^[0-9a-f]{16,}$ ]]; then
-            echo "Unexpected visual-contract hash output" >&2
-            exit 1
-          fi
-          {
-            echo "hash=${hash}"
-            echo "hash12=${hash:0:12}"
-          } >> "$GITHUB_OUTPUT"
-          echo "Candidate visual-contract hash: ${hash}"
+          [[ "$(git rev-parse HEAD)" == "$MERGE_SHA" ]]
+          mapfile -t parents < <(git show -s --format='%P' HEAD | tr ' ' '\n')
+          [[ "${#parents[@]}" -eq 2 && "${parents[0]}" == "$BASE_SHA" && "${parents[1]}" == "$HEAD_SHA" ]]
+      - name: Install untrusted consumer dependencies without credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          : > "$RUNNER_TEMP/empty-npmrc"
+          NPM_CONFIG_USERCONFIG="$RUNNER_TEMP/empty-npmrc" npm ci --no-audit --no-fund
+      - name: Compute candidate contract with the called workflow commit
+        id: contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          CLI="$RUNNER_TEMP/toolkit-source/dist/cli/main.js"
+          value="$(node "$CLI" workflow inspect-consumer --root "$GITHUB_WORKSPACE" --config "$CONFIG_PATH")"
+          contract="$(printf '%s' "$value" | jq -er '.contractHash | select(test("^[a-f0-9]{64}$"))')"
+          printf 'contract=%s\n' "$contract" >> "$GITHUB_OUTPUT"
 
-      # Plan section 9: exact base-SHA lookup, deterministic selection,
-      # bounded waiting, and distinct stable failure codes.
-      - name: Resolve baseline artifact
+  resolve-baseline:
+    name: Resolve exact base-SHA baseline
+    needs: [toolkit-identity, identity]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      actions: read
+    container:
+      image: mcr.microsoft.com/playwright:v1.61.1-noble@sha256:cf0daee9b994042e011bc29f20cdff1a9f682a039b43fcd738f7d8a9d3bcd9d6
+      options: --platform linux/amd64
+    outputs:
+      relay-id: ${{ steps.relay.outputs.artifact-id }}
+      relay-digest: ${{ steps.relay.outputs.artifact-digest }}
+      manifest-sha: ${{ steps.resolve.outputs.manifest-sha }}
+      source-run-id: ${{ steps.resolve.outputs.source-run-id }}
+      source-run-attempt: ${{ steps.resolve.outputs.source-run-attempt }}
+    steps:
+      - name: Load the trusted resolver from the main commit selected at job start
+        env:
+          TOOLKIT_COMMIT: ${{ needs.toolkit-identity.outputs.toolkit-commit }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          export GIT_TERMINAL_PROMPT=0
+          : > "$RUNNER_TEMP/empty-npmrc"
+          mkdir -p "$RUNNER_TEMP/toolkit-source"
+          git -C "$RUNNER_TEMP/toolkit-source" init
+          git -C "$RUNNER_TEMP/toolkit-source" remote add origin https://github.com/BrandonMathis/visual-regression-toolkit.git
+          # shellcheck disable=SC2153
+          git -C "$RUNNER_TEMP/toolkit-source" fetch --depth 1 origin "$TOOLKIT_COMMIT"
+          git -C "$RUNNER_TEMP/toolkit-source" checkout --detach FETCH_HEAD
+          toolkit_commit="$(git -C "$RUNNER_TEMP/toolkit-source" rev-parse HEAD)"
+          [[ "$toolkit_commit" == "$TOOLKIT_COMMIT" ]]
+          NPM_CONFIG_USERCONFIG="$RUNNER_TEMP/empty-npmrc" npm ci --prefix "$RUNNER_TEMP/toolkit-source" --ignore-scripts --no-audit --no-fund
+          npm run build --prefix "$RUNNER_TEMP/toolkit-source"
+          printf 'VISUAL_REGRESSION_TOOLKIT_COMMIT=%s\n' "$toolkit_commit" >> "$GITHUB_ENV"
+      - name: Query, quarantine, verify, and select baseline
         id: resolve
-        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
-          BASE_SHA: ${{ steps.identity.outputs.base-sha }}
-          BASE_SHA12: ${{ steps.identity.outputs.base-sha12 }}
-          CANDIDATE_HASH12: ${{ steps.confighash.outputs.hash12 }}
-          BASELINE_WORKFLOW_FILE: ${{ inputs.baseline-workflow-file }}
-        with:
-          script: |
-            const baseSha = process.env.BASE_SHA;
-            const baseSha12 = process.env.BASE_SHA12;
-            const candidateHash12 = process.env.CANDIDATE_HASH12;
-            const workflowFile = process.env.BASELINE_WORKFLOW_FILE;
-            const prefix = `visual-baseline-${baseSha12}-`;
-            const pollBudgetMs = 10 * 60 * 1000;
-            const pollIntervalMs = 30 * 1000;
-
-            const listRuns = async (status) =>
-              await github.paginate(github.rest.actions.listWorkflowRuns, {
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                workflow_id: workflowFile,
-                head_sha: baseSha,
-                status,
-                per_page: 100,
-              });
-
-            // Artifact name contract (plan section 8.1):
-            //   visual-baseline-<sha12>-<confighash12>-<run_id>-<run_attempt>
-            const parseName = (name) => {
-              const match = name.match(
-                /^visual-baseline-([0-9a-f]{12})-([0-9a-f]{12})-(\d+)-(\d+)$/,
-              );
-              if (match === null) return null;
-              return {
-                sha12: match[1],
-                hash12: match[2],
-                runId: Number(match[3]),
-                runAttempt: Number(match[4]),
-              };
-            };
-
-            const collectCandidates = async () => {
-              const runs = await listRuns('success');
-              const candidates = [];
-              for (const run of runs) {
-                const artifacts = await github.paginate(
-                  github.rest.actions.listWorkflowRunArtifacts,
-                  {
-                    owner: context.repo.owner,
-                    repo: context.repo.repo,
-                    run_id: run.id,
-                    per_page: 100,
-                  },
-                );
-                for (const artifact of artifacts) {
-                  if (!artifact.name.startsWith(prefix)) continue;
-                  const parsed = parseName(artifact.name);
-                  if (parsed === null) continue;
-                  candidates.push({ artifact, parsed, runId: run.id });
-                }
-              }
-              return candidates;
-            };
-
-            const failWithSummary = async (code, message, extra) => {
-              core.summary.addHeading(`Visual regression: ${code}`, 2);
-              core.summary.addRaw(`\n${message}\n`);
-              if (extra) core.summary.addRaw(`\n${extra}\n`);
-              await core.summary.write();
-              core.setFailed(`${code}: ${message}`);
-            };
-
-            const select = (candidates) => {
-              // Deterministic: highest run id, then highest run attempt.
-              return [...candidates].sort(
-                (a, b) =>
-                  b.parsed.runId - a.parsed.runId || b.parsed.runAttempt - a.parsed.runAttempt,
-              )[0];
-            };
-
-            const deadline = Date.now() + pollBudgetMs;
-            let waited = false;
-            for (;;) {
-              const candidates = await collectCandidates();
-              const matching = candidates.filter((c) => c.parsed.hash12 === candidateHash12);
-              if (matching.length > 0) {
-                const usable = matching.filter((c) => c.artifact.expired !== true);
-                if (usable.length === 0) {
-                  // An expired artifact is not a valid baseline. If a fresh
-                  // publication for this exact SHA is active, wait for it
-                  // within the same bounded budget (plan section 9 step 7).
-                  const active = [
-                    ...(await listRuns('queued')),
-                    ...(await listRuns('in_progress')),
-                  ];
-                  if (active.length > 0 && Date.now() < deadline) {
-                    waited = true;
-                    core.info(
-                      `Every baseline artifact for ${baseSha} has expired, but a baseline ` +
-                        `publication is active (${active.length} run(s)); ` +
-                        `waiting ${pollIntervalMs / 1000}s...`,
-                    );
-                    await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
-                    continue;
-                  }
-                  if (active.length > 0) {
-                    await failWithSummary(
-                      'BASELINE_NOT_READY',
-                      `Every baseline artifact for base SHA ${baseSha} has expired and the ` +
-                        'republication run was still running after waiting 10 minutes.',
-                      'Re-run this check once the baseline workflow for the base commit ' +
-                        'finishes.',
-                    );
-                    return;
-                  }
-                  await failWithSummary(
-                    'BASELINE_NOT_FOUND',
-                    `Every baseline artifact for base SHA ${baseSha} has expired` +
-                      `${waited ? ' (after waiting for active runs)' : ''}.`,
-                    'Publish a fresh baseline for the base commit (push, schedule, or ' +
-                      'manual dispatch of the baseline workflow), then re-run this check.',
-                  );
-                  return;
-                }
-                const chosen = select(usable);
-                core.info(
-                  `Selected baseline artifact ${chosen.artifact.name} ` +
-                    `(artifact id ${chosen.artifact.id}, run ${chosen.parsed.runId}, ` +
-                    `attempt ${chosen.parsed.runAttempt})`,
-                );
-                core.setOutput('artifact-name', chosen.artifact.name);
-                core.setOutput('artifact-id', String(chosen.artifact.id));
-                core.setOutput('run-id', String(chosen.parsed.runId));
-                return;
-              }
-              if (candidates.length > 0) {
-                // A baseline exists for this exact base SHA, but under a
-                // different visual-contract hash (plan sections 3 and 9).
-                await failWithSummary(
-                  'VISUAL_CONTRACT_CHANGED',
-                  `A baseline exists for base SHA ${baseSha}, but its visual-contract hash ` +
-                    `does not match this pull request's hash (${candidateHash12}...). ` +
-                    'This pull request changes the visual contract, so the existing ' +
-                    'baseline cannot be used.',
-                  'Rollout for config-changing pull requests: review the configuration ' +
-                    'change, merge with an explicit check waiver, let the baseline ' +
-                    'workflow publish a baseline from the resulting default-branch ' +
-                    'commit, and then normal comparisons resume. Version 1 never ' +
-                    'synthesizes an ephemeral baseline for a new contract.',
-                );
-                return;
-              }
-              const active = [...(await listRuns('queued')), ...(await listRuns('in_progress'))];
-              if (active.length > 0 && Date.now() < deadline) {
-                waited = true;
-                core.info(
-                  `Baseline publication for ${baseSha} is active ` +
-                    `(${active.length} run(s)); waiting ${pollIntervalMs / 1000}s...`,
-                );
-                await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
-                continue;
-              }
-              if (active.length > 0) {
-                await failWithSummary(
-                  'BASELINE_NOT_READY',
-                  `Baseline publication for base SHA ${baseSha} was still running after ` +
-                    'waiting 10 minutes.',
-                  'Re-run this check once the baseline workflow for the base commit finishes.',
-                );
-                return;
-              }
-              await failWithSummary(
-                'BASELINE_NOT_FOUND',
-                `No successful ${workflowFile} run with a baseline artifact exists for ` +
-                  `base SHA ${baseSha}${waited ? ' (after waiting for active runs)' : ''}.`,
-                'Publish a baseline for the base commit (push, schedule, or manual ' +
-                  'dispatch of the baseline workflow), then re-run this check.',
-              );
-              return;
-            }
-
-      # Downloaded outside .visual-regression/ so result directories never
-      # contain the untrusted download (plan section 9).
-      - name: Download baseline artifact
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: ${{ steps.resolve.outputs.artifact-name }}
-          run-id: ${{ steps.resolve.outputs.run-id }}
-          github-token: ${{ github.token }}
-          path: .visual-baseline-download
-
-      - name: Verify downloaded baseline
+          GITHUB_TOKEN: ${{ github.token }}
+          BASE_SHA: ${{ needs.identity.outputs.base-sha }}
+          BASE_BRANCH: ${{ needs.identity.outputs.base-branch }}
+          CONTRACT_HASH: ${{ needs.identity.outputs.contract }}
+          REPOSITORY_ID: ${{ needs.identity.outputs.repository-id }}
+          WORKFLOW_FILE: ${{ inputs.baseline-workflow-file }}
+        shell: bash
         run: |
           set -euo pipefail
-          npx visual-regression baseline verify "$BASELINE_DOWNLOAD_DIR" --json
-
-      # Exit code captured deliberately; the CLI enforces contract-hash and
-      # runtime compatibility and reuses the baseline's logical date.
-      - name: Compare candidate against baseline
-        id: compare
-        env:
-          CONFIG_PATH: ${{ inputs.config-path }}
-          BASE_SHA: ${{ steps.identity.outputs.base-sha }}
+          CLI="$RUNNER_TEMP/toolkit-source/dist/cli/main.js"
+          value="$(node "$CLI" workflow resolve-baseline --repository "$GITHUB_REPOSITORY" --repository-id "$REPOSITORY_ID" --base-sha "$BASE_SHA" --contract-hash "$CONTRACT_HASH" --base-branch "$BASE_BRANCH" --workflow-file "$WORKFLOW_FILE" --output "$RUNNER_TEMP/selected-baseline" --wait-seconds 600)"
+          {
+            printf 'manifest-sha=%s\n' "$(printf '%s' "$value" | jq -er '.manifestSha | select(test("^[a-f0-9]{64}$"))')"
+            printf 'source-run-id=%s\n' "$(printf '%s' "$value" | jq -er '.runId | select(test("^[1-9][0-9]*$"))')"
+            printf 'source-run-attempt=%s\n' "$(printf '%s' "$value" | jq -er '.runAttempt | select(type == "number" and . >= 1)')"
+          } >> "$GITHUB_OUTPUT"
+          node "$CLI" baseline verify "$RUNNER_TEMP/selected-baseline" --json > "$RUNNER_TEMP/resolver-verification.json"
+          node "$CLI" workflow scan-tree --path "$RUNNER_TEMP/selected-baseline" > "$RUNNER_TEMP/resolver-tree.json"
+      - name: Relay the verified baseline by immutable artifact ID
+        id: relay
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: visual-baseline-relay-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/selected-baseline
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+          overwrite: false
+          include-hidden-files: true
+      - name: Validate relay outputs
+        shell: bash
         run: |
-          set -uo pipefail
+          set -euo pipefail
+          [[ '${{ steps.relay.outputs.artifact-id }}' =~ ^[1-9][0-9]*$ ]]
+          [[ '${{ steps.relay.outputs.artifact-digest }}' =~ ^sha256:[a-f0-9]{64}$ ]]
+
+  compare:
+    name: Capture and compare synthetic merge
+    needs: [toolkit-identity, identity, resolve-baseline]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    outputs:
+      capture-exit: ${{ steps.capture.outputs.exit-code }}
+      evidence-id: ${{ steps.evidence.outputs.artifact-id }}
+      evidence-digest: ${{ steps.evidence.outputs.artifact-digest }}
+    container:
+      image: mcr.microsoft.com/playwright:v1.61.1-noble@sha256:cf0daee9b994042e011bc29f20cdff1a9f682a039b43fcd738f7d8a9d3bcd9d6
+      options: --platform linux/amd64
+    env:
+      CONFIG_PATH: ${{ inputs.config-path }}
+      VISUAL_REGRESSION_AUTHORITATIVE: "1"
+      BASE_SHA: ${{ needs.identity.outputs.base-sha }}
+      HEAD_SHA: ${{ needs.identity.outputs.head-sha }}
+      MERGE_SHA: ${{ needs.identity.outputs.merge-sha }}
+      BASE_BRANCH: ${{ needs.identity.outputs.base-branch }}
+      CONTRACT_HASH: ${{ needs.identity.outputs.contract }}
+      TOOLKIT_COMMIT: ${{ needs.toolkit-identity.outputs.toolkit-commit }}
+    steps:
+      - name: Check out the same synthetic merge commit
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ needs.identity.outputs.merge-sha }}
+          fetch-depth: 2
+          persist-credentials: false
+          clean: true
+          submodules: false
+          lfs: false
+      - name: Reverify candidate identity and install dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$(git rev-parse HEAD)" == "$MERGE_SHA" ]]
+          [[ "$(git show -s --format='%P' HEAD)" == "$BASE_SHA $HEAD_SHA" ]]
+          : > "$RUNNER_TEMP/empty-npmrc"
+          NPM_CONFIG_USERCONFIG="$RUNNER_TEMP/empty-npmrc" npm ci --no-audit --no-fund
+          export GIT_TERMINAL_PROMPT=0
+          mkdir -p "$RUNNER_TEMP/toolkit-source"
+          git -C "$RUNNER_TEMP/toolkit-source" init
+          git -C "$RUNNER_TEMP/toolkit-source" remote add origin https://github.com/BrandonMathis/visual-regression-toolkit.git
+          # shellcheck disable=SC2153
+          git -C "$RUNNER_TEMP/toolkit-source" fetch --depth 1 origin "$TOOLKIT_COMMIT"
+          git -C "$RUNNER_TEMP/toolkit-source" checkout --detach FETCH_HEAD
+          toolkit_commit="$(git -C "$RUNNER_TEMP/toolkit-source" rev-parse HEAD)"
+          [[ "$toolkit_commit" == "$TOOLKIT_COMMIT" ]]
+          NPM_CONFIG_USERCONFIG="$RUNNER_TEMP/empty-npmrc" npm ci --prefix "$RUNNER_TEMP/toolkit-source" --ignore-scripts --no-audit --no-fund
+          npm run build --prefix "$RUNNER_TEMP/toolkit-source"
+          export VISUAL_REGRESSION_TOOLKIT_COMMIT="$toolkit_commit"
+          printf 'VISUAL_REGRESSION_TOOLKIT_COMMIT=%s\n' "$toolkit_commit" >> "$GITHUB_ENV"
+          CLI="$RUNNER_TEMP/toolkit-source/dist/cli/main.js"
+          value="$(node "$CLI" workflow inspect-consumer --root "$GITHUB_WORKSPACE" --config "$CONFIG_PATH")"
+          [[ "$(printf '%s' "$value" | jq -er .contractHash)" == "$CONTRACT_HASH" ]]
+      - name: Download resolver relay by artifact ID
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          artifact-ids: ${{ needs.resolve-baseline.outputs.relay-id }}
+          path: ${{ runner.temp }}/selected-baseline
+          merge-multiple: true
+      - name: Verify relayed baseline immediately after download
+        shell: bash
+        run: |
+          set -euo pipefail
+          CLI="$RUNNER_TEMP/toolkit-source/dist/cli/main.js"
+          node "$CLI" baseline verify "$RUNNER_TEMP/selected-baseline" --json > "$RUNNER_TEMP/download-verification.json"
+          digest="$(sha256sum "$RUNNER_TEMP/selected-baseline/baseline-manifest.json" | cut -d' ' -f1)"
+          [[ "$digest" == '${{ needs.resolve-baseline.outputs.manifest-sha }}' ]]
+      - name: Compare and preserve CLI exit
+        id: capture
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf .visual-regression playwright-report/visual test-results/visual
+          CLI="$RUNNER_TEMP/toolkit-source/dist/cli/main.js"
+          node "$CLI" baseline verify "$RUNNER_TEMP/selected-baseline" --json > "$RUNNER_TEMP/precompare-verification.json"
           set +e
-          npx visual-regression compare \
-            --baseline "$BASELINE_DOWNLOAD_DIR" \
-            --config "$CONFIG_PATH" \
-            --expect-base-sha "$BASE_SHA" \
-            --expect-repository "$GITHUB_REPOSITORY" \
-            --json
+          node "$CLI" compare --json --config "$CONFIG_PATH" --baseline "$RUNNER_TEMP/selected-baseline" --repository "$GITHUB_REPOSITORY" --source-sha "$MERGE_SHA" --base-sha "$BASE_SHA" --base-branch "$BASE_BRANCH" --run-id "$GITHUB_RUN_ID" --run-attempt "$GITHUB_RUN_ATTEMPT"
           code=$?
           set -e
-          echo "exit-code=${code}" >> "$GITHUB_OUTPUT"
-          echo "Compare exited with code ${code}"
-
-      - name: Upload comparison artifacts
+          printf 'exit-code=%s\n' "$code" >> "$GITHUB_OUTPUT"
+      - name: Pre-scan fixed evidence paths
+        id: evidence-scan
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          CLI="$RUNNER_TEMP/toolkit-source/dist/cli/main.js"
+          node "$CLI" workflow scan-tree --path .visual-regression/result
+          for directory in .visual-regression/candidate .visual-regression/baseline playwright-report/visual test-results/visual; do
+            if [[ -d "$directory" ]]; then node "$CLI" workflow scan-tree --path "$directory"; fi
+          done
+      - name: Upload bounded visual evidence
+        id: evidence
+        if: always() && steps.evidence-scan.outcome == 'success'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: visual-regression-${{ steps.identity.outputs.base-sha12 || github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          name: visual-regression-evidence-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
-            .visual-regression/result/**
-            .visual-regression/candidate/**
-            playwright-report/visual/**
-            test-results/visual/**
-          include-hidden-files: true
-          if-no-files-found: warn
+            .visual-regression/result
+            .visual-regression/candidate
+            .visual-regression/baseline
+            playwright-report/visual
+            test-results/visual
+          if-no-files-found: error
           retention-days: 14
+          compression-level: 6
+          overwrite: false
+          include-hidden-files: true
 
-      - name: Append visual summary
-        if: always()
-        run: |
-          set -euo pipefail
-          if [ -f .visual-regression/result/visual-summary.md ]; then
-            head -c 65536 .visual-regression/result/visual-summary.md >> "$GITHUB_STEP_SUMMARY"
-            echo '' >> "$GITHUB_STEP_SUMMARY"
-          else
-            echo 'No visual summary was produced.' >> "$GITHUB_STEP_SUMMARY"
-          fi
-
-      # Exit 0 -> pass. Exit 2 -> advisory success ONLY after the result JSON
-      # validates completely (plan sections 10 and 14); a malformed or
-      # oversized result must never convert to advisory success. Anything
-      # else -> fail with the stable error code from the result when readable.
-      - name: Classify result
+  trusted-gate:
+    name: Validate untrusted result and enforce disposition
+    needs: [toolkit-identity, identity, resolve-baseline, compare]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      actions: read
+    steps:
+      - name: Load the trusted gate from the main commit selected at job start
         env:
-          COMPARE_EXIT_CODE: ${{ steps.compare.outputs.exit-code }}
-          INFORMATIONAL: ${{ inputs.visual-diffs-are-informational }}
-          BASE_SHA: ${{ steps.identity.outputs.base-sha }}
-          HEAD_SHA: ${{ steps.identity.outputs.head-sha }}
-          MERGE_SHA: ${{ steps.identity.outputs.merge-sha }}
+          TOOLKIT_COMMIT: ${{ needs.toolkit-identity.outputs.toolkit-commit }}
+        shell: bash
         run: |
           set -euo pipefail
-          node --input-type=module - <<'SCRIPT'
-          import { readFileSync, statSync } from 'node:fs';
-          const resultPath = '.visual-regression/result/visual-result.json';
-          const maxResultBytes = 2 * 1024 * 1024;
-          const exitCode = process.env.COMPARE_EXIT_CODE;
-          const informational = process.env.INFORMATIONAL === 'true';
-          const fail = (message) => {
-            console.error(message);
-            process.exit(1);
-          };
-          const readResult = () => {
-            let size;
-            try {
-              size = statSync(resultPath).size;
-            } catch {
-              return { error: `missing result file ${resultPath}` };
-            }
-            if (size >= maxResultBytes) {
-              return { error: `result file is ${size} bytes (limit ${maxResultBytes})` };
-            }
-            try {
-              return { result: JSON.parse(readFileSync(resultPath, 'utf8')) };
-            } catch {
-              return { error: 'result file is not valid JSON' };
-            }
-          };
-          if (exitCode === '0') {
-            console.log('Visual comparison passed with no differences.');
-            process.exit(0);
-          }
-          if (exitCode === '2') {
-            const { result, error } = readResult();
-            if (error !== undefined) fail(`RESULT_INVALID: exit code 2 but ${error}`);
-            const problems = [];
-            if (result.operation !== 'compare') {
-              problems.push(`operation is "${result.operation}", expected "compare"`);
-            }
-            if (result.status !== 'visual-diff') {
-              problems.push(`status is "${result.status}", expected "visual-diff"`);
-            }
-            // The checkout is the PR merge ref, so the CLI records the merge
-            // commit as the candidate; the PR head SHA is also accepted.
-            const allowedShas = [process.env.MERGE_SHA, process.env.HEAD_SHA];
-            if (!allowedShas.includes(result.candidateSha)) {
-              problems.push(`candidateSha "${result.candidateSha}" matches neither merge nor head SHA`);
-            }
-            if (result.baseline?.sourceSha !== process.env.BASE_SHA) {
-              problems.push(`baseline.sourceSha "${result.baseline?.sourceSha}" is not the base SHA`);
-            }
-            if (problems.length > 0) {
-              fail(`RESULT_INVALID: visual-diff result failed validation: ${problems.join('; ')}`);
-            }
-            if (informational) {
-              console.log(
-                '::notice title=Visual differences::Validated visual differences found; ' +
-                  'informational mode converts this to an advisory success. ' +
-                  'Review the job summary and downloaded artifacts.',
-              );
-              process.exit(0);
-            }
-            fail('Visual differences found and visual-diffs-are-informational is false.');
-          }
-          const { result } = readResult();
-          const code = result?.errors?.[0]?.code ?? 'INTERNAL_ERROR';
-          const message = result?.errors?.[0]?.message ?? 'no readable result error message';
-          fail(`Visual comparison failed (exit ${exitCode ?? 'unknown'}) with ${code}: ${message}`);
-          SCRIPT
+          export GIT_TERMINAL_PROMPT=0
+          : > "$RUNNER_TEMP/empty-npmrc"
+          mkdir -p "$RUNNER_TEMP/toolkit-source"
+          git -C "$RUNNER_TEMP/toolkit-source" init
+          git -C "$RUNNER_TEMP/toolkit-source" remote add origin https://github.com/BrandonMathis/visual-regression-toolkit.git
+          # shellcheck disable=SC2153
+          git -C "$RUNNER_TEMP/toolkit-source" fetch --depth 1 origin "$TOOLKIT_COMMIT"
+          git -C "$RUNNER_TEMP/toolkit-source" checkout --detach FETCH_HEAD
+          toolkit_commit="$(git -C "$RUNNER_TEMP/toolkit-source" rev-parse HEAD)"
+          [[ "$toolkit_commit" == "$TOOLKIT_COMMIT" ]]
+          NPM_CONFIG_USERCONFIG="$RUNNER_TEMP/empty-npmrc" npm ci --prefix "$RUNNER_TEMP/toolkit-source" --ignore-scripts --no-audit --no-fund
+          npm run build --prefix "$RUNNER_TEMP/toolkit-source"
+          printf 'VISUAL_REGRESSION_TOOLKIT_COMMIT=%s\n' "$toolkit_commit" >> "$GITHUB_ENV"
+      - name: Validate immutable evidence relay identity
+        env:
+          EVIDENCE_ID: ${{ needs.compare.outputs.evidence-id }}
+          EVIDENCE_DIGEST: ${{ needs.compare.outputs.evidence-digest }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$EVIDENCE_ID" =~ ^[1-9][0-9]*$ ]]
+          [[ "$EVIDENCE_DIGEST" =~ ^sha256:[a-f0-9]{64}$ ]]
+      - name: Download untrusted evidence by artifact ID
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          artifact-ids: ${{ needs.compare.outputs.evidence-id }}
+          path: ${{ runner.temp }}/evidence
+          merge-multiple: true
+      - name: Validate result with code never exposed to consumer execution
+        id: gate
+        env:
+          CAPTURE_EXIT: ${{ needs.compare.outputs.capture-exit }}
+          MERGE_SHA: ${{ needs.identity.outputs.merge-sha }}
+          BASE_SHA: ${{ needs.identity.outputs.base-sha }}
+          CONTRACT_HASH: ${{ needs.identity.outputs.contract }}
+          INFORMATIONAL: ${{ inputs.visual-diffs-are-informational }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          CLI="$RUNNER_TEMP/toolkit-source/dist/cli/main.js"
+          node "$CLI" workflow scan-tree --path "$RUNNER_TEMP/evidence" > "$RUNNER_TEMP/evidence-tree.json"
+          if [[ -d "$RUNNER_TEMP/evidence/.visual-regression/baseline" ]]; then
+            node "$CLI" baseline verify "$RUNNER_TEMP/evidence/.visual-regression/baseline" --json > "$RUNNER_TEMP/evidence-baseline.json"
+          fi
+          value="$(node "$CLI" workflow validate-result --root "$RUNNER_TEMP/evidence" --operation compare --exit-code "$CAPTURE_EXIT" --candidate-sha "$MERGE_SHA" --baseline-sha "$BASE_SHA" --contract-hash "$CONTRACT_HASH" --summary "$RUNNER_TEMP/visual-summary.md" --informational "$INFORMATIONAL")"
+          conclusion="$(printf '%s' "$value" | jq -er '.conclusion | select(. == "success" or . == "advisory" or . == "failure")')"
+          printf 'conclusion=%s\n' "$conclusion" >> "$GITHUB_OUTPUT"
+      - name: Publish trusted summary and enforce disposition
+        env:
+          CONCLUSION: ${{ steps.gate.outputs.conclusion }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat "$RUNNER_TEMP/visual-summary.md" >> "$GITHUB_STEP_SUMMARY"
+          case "$CONCLUSION" in
+            success) exit 0 ;;
+            advisory)
+              echo '::warning title=Visual differences detected::Validated visual differences are informational; download the evidence artifact.'
+              exit 0
+              ;;
+            failure) exit 1 ;;
+            *) exit 1 ;;
+          esac

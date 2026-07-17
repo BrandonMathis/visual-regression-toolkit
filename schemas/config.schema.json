@@ -1,0 +1,270 @@
+{
+  "$id": "https://thisdot.co/schemas/visual-regression/config-v1.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "framework",
+    "commands",
+    "server"
+  ],
+  "properties": {
+    "framework": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type"
+      ],
+      "properties": {
+        "type": {
+          "const": "next-prerender"
+        },
+        "manifestPath": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1024
+        }
+      }
+    },
+    "commands": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "build",
+        "start"
+      ],
+      "properties": {
+        "build": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "start": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        }
+      }
+    },
+    "server": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "origin"
+      ],
+      "properties": {
+        "origin": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "readinessPath": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1024
+        },
+        "startupTimeoutMs": {
+          "type": "integer",
+          "minimum": 100,
+          "maximum": 600000
+        }
+      }
+    },
+    "routes": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "include": {
+          "type": "array",
+          "maxItems": 256,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024
+          }
+        },
+        "exclude": {
+          "type": "array",
+          "maxItems": 256,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024
+          }
+        },
+        "additional": {
+          "type": "array",
+          "maxItems": 256,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024
+          }
+        }
+      }
+    },
+    "clock": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "environmentVariable": {
+          "type": "string",
+          "pattern": "^[A-Z_][A-Z0-9_]{0,63}$"
+        }
+      }
+    },
+    "projects": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 16,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "width",
+          "height"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9-]{0,31}$"
+          },
+          "width": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 8192
+          },
+          "height": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 8192
+          },
+          "hasTouch": {
+            "type": "boolean"
+          },
+          "isMobile": {
+            "type": "boolean"
+          },
+          "deviceScaleFactor": {
+            "type": "number",
+            "minimum": 1,
+            "maximum": 4
+          }
+        }
+      }
+    },
+    "capture": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "colorScheme": {
+          "enum": [
+            "light",
+            "dark"
+          ]
+        },
+        "locale": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "timezoneId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "reducedMotion": {
+          "enum": [
+            "reduce",
+            "no-preference"
+          ]
+        },
+        "fontChecks": {
+          "type": "array",
+          "maxItems": 64,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024
+          }
+        },
+        "readinessSelectors": {
+          "type": "array",
+          "maxItems": 64,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024
+          }
+        },
+        "masks": {
+          "type": "array",
+          "maxItems": 64,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024
+          }
+        },
+        "externalRequests": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "default": {
+              "const": "block"
+            },
+            "allow": {
+              "type": "array",
+              "maxItems": 64,
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1024
+              }
+            }
+          }
+        },
+        "screenshot": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "fullPage": {
+              "const": true
+            },
+            "threshold": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            }
+          }
+        },
+        "navigationTimeoutMs": {
+          "type": "integer",
+          "minimum": 100,
+          "maximum": 120000
+        },
+        "stabilizationTimeoutMs": {
+          "type": "integer",
+          "minimum": 100,
+          "maximum": 120000
+        },
+        "maxScrollPasses": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000
+        },
+        "maxDocumentHeight": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100000
+        },
+        "maxResources": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10000
+        }
+      }
+    }
+  }
+}
