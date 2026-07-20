@@ -25,6 +25,19 @@ reports.
 
 ## Install
 
+### With a coding agent
+
+Ask your coding agent:
+
+```text
+Install this tool: https://github.com/BrandonMathis/visual-regression-toolkit/blob/main/install.md
+```
+
+The agent will check that the repository is compatible before making changes, then install and
+configure the package and GitHub Actions workflows.
+
+### Manually
+
 Install the package from GitHub as a development dependency:
 
 ```sh
