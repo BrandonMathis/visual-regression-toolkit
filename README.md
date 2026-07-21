@@ -168,7 +168,7 @@ adding the workflow, merge or push to `main` once before relying on PR compariso
 The PR workflow finds the latest successful `main` run of the consumer's
 `visual-baseline.yml`. It fails if that run or its unexpired `visual-baseline-screenshots` artifact
 is unavailable. It then downloads that artifact into `tests/visual/__screenshots__/`, runs the
-comparison, uploads `playwright-visual-report`, and creates or updates a sticky PR comment marked
+comparison, uploads `playwright-visual-report` and `playwright-test-results` as separate artifacts, and creates or updates a sticky PR comment marked
 `<!-- visual-regression-report -->`.
 
 The artifact download does not clear screenshots already present in the checkout; the artifact is
