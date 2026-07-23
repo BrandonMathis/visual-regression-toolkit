@@ -36,7 +36,7 @@ jobs:
         run: npx --no-install run-visual --update
 
       - name: Upload main baseline
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: visual-baseline-screenshots
           path: tests/visual/__screenshots__/
