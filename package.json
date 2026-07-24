@@ -1,6 +1,6 @@
 {
   "name": "@thisdot/visual-regression",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Shared visual regression toolkit for internal Next.js websites.",
   "type": "module",
   "license": "MIT",
@@ -36,7 +36,7 @@
     "lint": "eslint .",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "test": "node tests/fixture/smoke.mjs"
+    "test": "node --test tests/route-discovery.test.mjs && node tests/fixture/smoke.mjs"
   },
   "dependencies": {
     "@playwright/test": "1.61.1"

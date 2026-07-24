@@ -1,15 +1,6 @@
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
 import { expect, test } from '@playwright/test';
 import type { Page } from '@playwright/test';
-
-interface PrerenderedRoute {
-  dataRoute: string | null;
-}
-
-interface PrerenderManifest {
-  routes: Record<string, PrerenderedRoute>;
-}
+import { getSitePages } from './route-discovery.js';
 
 interface VisualOptions {
   fonts: string[];
@@ -23,29 +14,6 @@ function getOptions(): VisualOptions {
     ...defaults,
     ...(JSON.parse(process.env.VISUAL_TOOLKIT_OPTIONS) as Partial<VisualOptions>),
   };
-}
-
-function getSitePages(exclude: string[]) {
-  const manifestPath = resolve(process.cwd(), '.next/prerender-manifest.json');
-  let manifest: PrerenderManifest;
-
-  try {
-    manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as PrerenderManifest;
-  } catch {
-    throw new Error(
-      'Could not read the Next.js prerender manifest. Run visual tests through "npm run test:visual".',
-    );
-  }
-
-  return Object.entries(manifest.routes)
-    .filter(
-      ([route, details]) =>
-        details.dataRoute !== null &&
-        !route.startsWith('/_') &&
-        !exclude.some((prefix) => route.startsWith(prefix)),
-    )
-    .map(([route]) => route)
-    .sort();
 }
 
 function screenshotName(route: string) {

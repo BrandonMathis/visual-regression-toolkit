@@ -1,4 +1,4 @@
-import { readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 
@@ -20,6 +20,20 @@ function run(args, expectSuccess = true) {
   }
 }
 
+function verifyBaselines() {
+  const projects = ['desktop', 'tablet', 'phone'];
+  const screenshots = ['home.png', 'request-rendered.png'];
+
+  for (const project of projects) {
+    for (const screenshot of screenshots) {
+      const screenshotPath = resolve(fixture, 'tests/visual/__screenshots__', project, screenshot);
+      if (!existsSync(screenshotPath)) {
+        throw new Error(`Baseline was not generated: ${screenshotPath}`);
+      }
+    }
+  }
+}
+
 rmSync(resolve(fixture, '.next'), { recursive: true, force: true });
 rmSync(resolve(fixture, 'playwright-report'), { recursive: true, force: true });
 rmSync(resolve(fixture, 'test-results'), { recursive: true, force: true });
@@ -27,6 +41,7 @@ rmSync(resolve(fixture, 'tests/visual/__screenshots__'), { recursive: true, forc
 
 try {
   run(['--update']);
+  verifyBaselines();
   run([]);
 
   writeFileSync(cssPath, `${originalCss}\n.card { background: #101010; }\n`);

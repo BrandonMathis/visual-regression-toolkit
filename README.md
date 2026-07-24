@@ -1,13 +1,14 @@
 # Visual Regression Toolkit
 
-A shared Playwright toolkit for visual regression testing of prerendered Next.js pages. It discovers
-routes from Next.js's prerender manifest, captures full-page Chromium screenshots at three viewport
-sizes, and provides reusable GitHub Actions workflows for baseline publishing and pull-request
-reports.
+A shared Playwright toolkit for visual regression testing of Next.js pages. It discovers statically
+prerendered routes and fixed App Router routes rendered per request, captures full-page Chromium
+screenshots at three viewport sizes, and provides reusable GitHub Actions workflows for baseline
+publishing and pull-request reports.
 
 ## What it does
 
-- Tests every eligible route in `.next/prerender-manifest.json`.
+- Tests eligible routes from `.next/prerender-manifest.json` and
+  `.next/app-path-routes-manifest.json`.
 - Captures desktop (`1440×900`), tablet (`768×1024`), and phone (`375×812`) screenshots.
 - Waits for configured fonts, images, and video posters before capture; it reports unloaded images
   as failures.
@@ -17,7 +18,8 @@ reports.
 
 ## Requirements
 
-- A Next.js site that produces `.next/prerender-manifest.json` during `next build`.
+- A Next.js site that produces `.next/prerender-manifest.json` or
+  `.next/app-path-routes-manifest.json` during `next build`.
 - Node.js 22 or later.
 - Docker for local, CI-comparable screenshots. GitHub Actions workflows already run inside the
   required Playwright container.
@@ -84,10 +86,14 @@ All options are optional:
 | `startCommand` | `npm run start -- --hostname 127.0.0.1` | Command that serves the already-built site.                                 |
 | `exclude`      | `[]`                                    | Route-prefixes to omit, for example `['/drafts']`.                          |
 
-The runner builds the site before starting the configured server. Routes are included when they have
-a non-null `dataRoute` in the prerender manifest; `/_` routes and configured prefixes are skipped.
-Screenshot files are written under `tests/visual/__screenshots__/` by viewport. The root route is
-`home.png`; nested-route separators become `--`.
+The runner builds the site before starting the configured server. It includes concrete routes with a
+non-null `dataRoute` in the prerender manifest and fixed page routes in the App Router manifest.
+This supports fixed App Router routes whether they are statically prerendered or rendered per
+request. Internal `/_` routes, configured prefixes, and unresolved parameter patterns are skipped.
+Parameterized SSR routes such as `/posts/[slug]` are not yet supported because they require a future
+explicit-route mechanism; concrete `generateStaticParams()` instances remain supported through the
+prerender manifest. Screenshot files are written under `tests/visual/__screenshots__/` by viewport.
+The root route is `home.png`; nested-route separators become `--`.
 
 ## Run locally
 
@@ -192,8 +198,9 @@ in all three workflows together. Regenerate consumer baselines after the upgrade
 ## Troubleshooting
 
 - **Docker is required:** Start Docker Desktop, then rerun the visual command.
-- **Prerender manifest cannot be read:** Verify the config is named `playwright.visual.config.ts`
-  and that the site's build command produces `.next/prerender-manifest.json`.
+- **Route manifests cannot be read:** Verify the config is named `playwright.visual.config.ts` and
+  that the site's build command produces `.next/prerender-manifest.json` or
+  `.next/app-path-routes-manifest.json`.
 - **No successful main baseline exists:** Run the baseline workflow successfully on `main`; committed
   screenshots alone do not satisfy the PR workflow's artifact requirement.
 - **Images fail to load:** Visual tests block third-party network requests. Serve needed assets from
