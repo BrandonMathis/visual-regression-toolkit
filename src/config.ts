@@ -2,6 +2,7 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { defineConfig } from '@playwright/test';
 import type { PlaywrightTestConfig } from '@playwright/test';
+export { PLAYWRIGHT_IMAGE, PLAYWRIGHT_VERSION } from './playwright.js';
 
 export interface VisualConfigOptions {
   fonts?: string[];
@@ -10,9 +11,6 @@ export interface VisualConfigOptions {
   startCommand?: string;
   exclude?: string[];
 }
-
-export const PLAYWRIGHT_VERSION = '1.61.1';
-export const PLAYWRIGHT_IMAGE = `mcr.microsoft.com/playwright:v${PLAYWRIGHT_VERSION}-noble`;
 
 const sourceDir = dirname(fileURLToPath(import.meta.url));
 
