@@ -13,11 +13,15 @@ permissions:
   contents: read
 
 jobs:
+  playwright-image:
+    uses: ./.github/workflows/playwright-image.yml
+
   publish-baseline:
     name: Publish main screenshots
+    needs: playwright-image
     runs-on: ubuntu-latest
     container:
-      image: mcr.microsoft.com/playwright:v1.61.1-noble
+      image: ${{ needs.playwright-image.outputs.image }}
 
     steps:
       - name: Checkout
