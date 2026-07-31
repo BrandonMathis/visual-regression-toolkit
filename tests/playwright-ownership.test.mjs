@@ -56,17 +56,25 @@ test('the runner resolves the CLI from that same toolkit dependency', () => {
   assert.match(runnerSource, /run\(process\.execPath, \[PLAYWRIGHT_CLI,/);
 });
 
-test('every toolkit Docker image matches the installed Playwright version', () => {
+test('workflow Docker images derive their version from package-lock.json', () => {
   const workflowDir = resolve(root, '.github/workflows');
-  const imageVersions = readdirSync(workflowDir)
+  const resolverName = 'playwright-image.yml';
+  const containerWorkflows = readdirSync(workflowDir)
     .filter((name) => name.endsWith('.yml') || name.endsWith('.yaml'))
-    .flatMap((name) => {
-      const workflow = readFileSync(resolve(workflowDir, name), 'utf8');
-      return [...workflow.matchAll(/mcr\.microsoft\.com\/playwright:v([^-]+)-noble/g)].map(
-        ([, version]) => version,
-      );
-    });
+    .map((name) => [name, readFileSync(resolve(workflowDir, name), 'utf8')])
+    .filter(([, workflow]) => workflow.includes('container:'));
+  const resolver = readFileSync(resolve(workflowDir, resolverName), 'utf8');
 
-  assert.ok(imageVersions.length > 0, 'no Playwright Docker images were found');
-  assert.deepEqual([...new Set(imageVersions)], [PLAYWRIGHT_VERSION]);
+  assert.ok(containerWorkflows.length > 0, 'no container workflows were found');
+  for (const [name, workflow] of containerWorkflows) {
+    assert.doesNotMatch(
+      workflow,
+      /mcr\.microsoft\.com\/playwright:v\d+\.\d+\.\d+-noble/,
+      `${name} must not duplicate the Playwright version`,
+    );
+    assert.match(workflow, /uses: \.\/\.github\/workflows\/playwright-image\.yml/);
+    assert.match(workflow, /image: \$\{\{ needs\.playwright-image\.outputs\.image \}\}/);
+  }
+  assert.match(resolver, /path\.endsWith\('node_modules\/@playwright\/test'\)/);
+  assert.match(resolver, /image=mcr\.microsoft\.com\/playwright:v\$\{version\}-noble/);
 });

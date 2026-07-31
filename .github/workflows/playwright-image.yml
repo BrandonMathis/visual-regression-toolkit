@@ -1,0 +1,40 @@
+name: Resolve Playwright Image
+
+on:
+  workflow_call:
+    outputs:
+      image:
+        description: Playwright Docker image matching package-lock.json
+        value: ${{ jobs.resolve.outputs.image }}
+
+permissions:
+  contents: read
+
+jobs:
+  resolve:
+    name: Resolve Playwright image
+    runs-on: ubuntu-latest
+    outputs:
+      image: ${{ steps.image.outputs.image }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Resolve image from package lock
+        id: image
+        run: |
+          node --input-type=module <<'NODE' >> "$GITHUB_OUTPUT"
+          import { readFileSync } from 'node:fs'
+
+          const lock = JSON.parse(readFileSync('package-lock.json', 'utf8'))
+          const versions = new Set(
+            Object.entries(lock.packages)
+              .filter(([path]) => path.endsWith('node_modules/@playwright/test'))
+              .map(([, metadata]) => metadata.version)
+          )
+          if (versions.size !== 1) {
+            throw new Error(`Expected one @playwright/test version, found: ${[...versions].join(', ')}`)
+          }
+          const [version] = versions
+          console.log(`image=mcr.microsoft.com/playwright:v${version}-noble`)
+          NODE
