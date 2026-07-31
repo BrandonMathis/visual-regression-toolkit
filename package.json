@@ -1,6 +1,6 @@
 {
   "name": "@thisdot/visual-regression",
-  "version": "1.0.1",
+  "version": "1.0.3",
   "description": "Shared visual regression toolkit for internal Next.js websites.",
   "type": "module",
   "license": "MIT",
