@@ -48,6 +48,8 @@ npm install --save-dev github:BrandonMathis/visual-regression-toolkit
 
 The package is not published to npm. Its `prepare` script builds `dist/` during a Git dependency
 installation. Pin the Git dependency to a commit or tag when reproducible consumer installs matter.
+Do not install `@playwright/test` or `playwright` separately for this setup. The toolkit owns its
+pinned Playwright dependency so its test API, CLI, browsers, and Docker image stay on one version.
 
 Add these scripts to the consumer's `package.json`:
 
@@ -114,7 +116,8 @@ npm run test:visual
 Both commands run inside the pinned Playwright Docker image. This is intentional: macOS and Linux
 can rasterize fonts differently, so host-browser screenshots are not CI-comparable. If Docker is
 unavailable, `CI=1 npm run test:visual` forces a host-only run, but do not use its screenshots as CI
-baselines.
+baselines. The runner invokes the CLI from the toolkit's installed `@playwright/test` dependency
+directly; it does not resolve Playwright through the consumer repository's `npx`.
 
 On failures, inspect `playwright-report/index.html`. The custom reporter also writes
 `test-results/visual-changes.json` and `test-results/visual-summary.md`.
@@ -191,9 +194,11 @@ links.
 
 ## Updating the toolkit
 
-The package, Docker image, and workflows are pinned to Playwright `1.61.1`. When upgrading it,
-update the dependency in `package.json`, `PLAYWRIGHT_VERSION` in `src/config.ts`, and the image tags
-in all three workflows together. Regenerate consumer baselines after the upgrade.
+The package, runner, Docker image, and workflows are pinned to Playwright `1.61.1`. The runner and
+local image derive that version from the installed `@playwright/test` package. When upgrading it,
+update the exact dependency in `package.json`, regenerate both lockfiles, and update the image tags
+in all three workflows together. The test suite rejects duplicate or mismatched Playwright
+installations and image tags. Regenerate consumer baselines after the upgrade.
 
 ## Troubleshooting
 

@@ -22,6 +22,9 @@ Run:
 npm install --save-dev github:BrandonMathis/visual-regression-toolkit
 ```
 
+Do not add `@playwright/test` or `playwright` to the consumer package. The toolkit owns and invokes
+its pinned Playwright dependency.
+
 Add these `package.json` scripts:
 
 ```json
