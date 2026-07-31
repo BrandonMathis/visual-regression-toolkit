@@ -39,7 +39,7 @@
     "test": "node --test tests/route-discovery.test.mjs tests/playwright-ownership.test.mjs && node tests/fixture/smoke.mjs"
   },
   "dependencies": {
-    "@playwright/test": "1.61.1"
+    "@playwright/test": "1.62.0"
   },
   "devDependencies": {
     "@types/node": "26.1.2",
