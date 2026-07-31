@@ -9,10 +9,10 @@
  * In CI: the workflow already uses that image, so this runs Playwright directly.
  */
 import { spawnSync } from 'node:child_process';
-import { PLAYWRIGHT_IMAGE } from './config.js';
+import { PLAYWRIGHT_CLI, PLAYWRIGHT_IMAGE } from './playwright.js';
 const CONFIG = 'playwright.visual.config.ts';
 const update = process.argv.includes('--update');
-const playwrightArgs = ['playwright', 'test', '--config', CONFIG];
+const playwrightArgs = ['test', '--config', CONFIG];
 playwrightArgs.push(update ? '--update-snapshots' : '--update-snapshots=missing');
 
 function run(command, args, options = {}) {
@@ -22,7 +22,7 @@ function run(command, args, options = {}) {
 
 if (process.env.CI) {
   run('npm', ['run', 'build'], { shell: true });
-  run('npx', playwrightArgs, { shell: true });
+  run(process.execPath, [PLAYWRIGHT_CLI, ...playwrightArgs]);
   process.exit(0);
 }
 
@@ -36,13 +36,16 @@ if (docker.status !== 0) {
   process.exit(1);
 }
 
-const playwrightCommand = ['npx', ...playwrightArgs].join(' ');
-const inner = ['npm ci', 'npm run build', playwrightCommand].join(' && ');
+const toolkitCommand = ['./node_modules/.bin/run-visual'];
+if (update) toolkitCommand.push('--update');
+const inner = ['npm ci', toolkitCommand.join(' ')].join(' && ');
 
 run('docker', [
   'run',
   '--rm',
   '--ipc=host',
+  '-e',
+  'CI=1',
   '-v',
   `${process.cwd()}:/work`,
   '-v',
