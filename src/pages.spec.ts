@@ -1,6 +1,9 @@
+import { existsSync } from 'node:fs';
 import { expect, test } from '@playwright/test';
 import type { Page } from '@playwright/test';
 import { getSitePages } from './route-discovery.js';
+
+const newPageAnnotation = 'visual-regression-new-page';
 
 interface VisualOptions {
   fonts: string[];
@@ -19,6 +22,10 @@ function getOptions(): VisualOptions {
 function screenshotName(route: string) {
   if (route === '/') return 'home.png';
   return `${route.slice(1).replaceAll('/', '--')}.png`;
+}
+
+function isMissingBaselineError(error: { message?: string }) {
+  return error.message?.includes("A snapshot doesn't exist at") ?? false;
 }
 
 async function prepareFullPage(page: Page, fonts: string[]) {
@@ -120,7 +127,7 @@ const pages = getSitePages(options.exclude);
 
 test.describe('full-page visual regression', () => {
   for (const route of pages) {
-    test(route, async ({ baseURL, page }) => {
+    test(route, async ({ baseURL, page }, testInfo) => {
       const siteOrigin = new URL(baseURL!).origin;
 
       await page.route('**/*', async (requestRoute) => {
@@ -140,9 +147,32 @@ test.describe('full-page visual regression', () => {
 
       await prepareFullPage(page, options.fonts);
 
-      await expect(page).toHaveScreenshot(screenshotName(route), {
+      const name = screenshotName(route);
+      const baselinePath = testInfo.snapshotPath(name, { kind: 'screenshot' });
+      const isNewPage = !existsSync(baselinePath);
+      if (isNewPage) {
+        testInfo.annotations.push({ type: newPageAnnotation });
+      }
+
+      const errorsBeforeScreenshot = testInfo.errors.length;
+      await expect(page).toHaveScreenshot(name, {
         fullPage: true,
       });
+
+      if (isNewPage) {
+        // Playwright writes a missing snapshot in "missing" mode but records a soft error.
+        // Clear only that expected result; capture or page failures still fail the test.
+        const screenshotErrors = testInfo.errors.slice(errorsBeforeScreenshot);
+        if (screenshotErrors.length > 0 && screenshotErrors.every(isMissingBaselineError)) {
+          testInfo.errors.splice(errorsBeforeScreenshot);
+          testInfo.status = 'passed';
+        }
+
+        await testInfo.attach('new-page-screenshot', {
+          path: baselinePath,
+          contentType: 'image/png',
+        });
+      }
     });
   }
 });

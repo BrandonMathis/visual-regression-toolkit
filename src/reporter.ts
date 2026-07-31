@@ -5,6 +5,7 @@ import type { FullResult, Reporter, Suite, TestCase } from '@playwright/test/rep
 const resultsDir = resolve(process.cwd(), 'test-results');
 const summaryPath = resolve(resultsDir, 'visual-summary.md');
 const changesPath = resolve(resultsDir, 'visual-changes.json');
+const newPageAnnotation = 'visual-regression-new-page';
 
 interface ChangedPage {
   route: string;
@@ -15,28 +16,28 @@ function isScreenshotError(error: { message?: string; stack?: string }) {
   return `${error.message ?? ''}\n${error.stack ?? ''}`.includes('toHaveScreenshot');
 }
 
-function isScreenshotFailure(test: TestCase) {
-  return test.results.some((result) => result.errors.some(isScreenshotError));
+function isNewPage(test: TestCase) {
+  return test.annotations.some(({ type }) => type === newPageAnnotation);
 }
 
 function hasNonVisualFailure(test: TestCase) {
   return (
-    !isScreenshotFailure(test) ||
+    !test.results.some((result) => result.errors.some(isScreenshotError)) ||
     test.results.some((result) => result.errors.some((error) => !isScreenshotError(error)))
   );
 }
 
-function collectChangedPages(finalFailures: TestCase[]): ChangedPage[] {
-  const changedPages = new Map<string, Set<string>>();
+function collectPages(tests: TestCase[], predicate: (test: TestCase) => boolean): ChangedPage[] {
+  const pages = new Map<string, Set<string>>();
 
-  for (const test of finalFailures.filter(isScreenshotFailure)) {
+  for (const test of tests.filter(predicate)) {
     const viewport = test.parent.project()?.name ?? 'unknown viewport';
-    const viewports = changedPages.get(test.title) ?? new Set<string>();
+    const viewports = pages.get(test.title) ?? new Set<string>();
     viewports.add(viewport);
-    changedPages.set(test.title, viewports);
+    pages.set(test.title, viewports);
   }
 
-  return [...changedPages]
+  return [...pages]
     .sort(([left], [right]) => left.localeCompare(right))
     .map(([route, viewports]) => ({
       route,
@@ -44,8 +45,30 @@ function collectChangedPages(finalFailures: TestCase[]): ChangedPage[] {
     }));
 }
 
-function buildSummary(result: FullResult, changedPages: ChangedPage[], finalFailures: TestCase[]) {
-  const lines = [`**Visual check:** ${result.status}`];
+function appendPages(lines: string[], pages: ChangedPage[]) {
+  for (const page of pages) {
+    lines.push(`- [ ] \`${page.route}\` — ${page.viewports.join(', ')}`);
+  }
+}
+
+function buildSummary(
+  status: FullResult['status'],
+  newlyAddedPages: ChangedPage[],
+  changedPages: ChangedPage[],
+  finalFailures: TestCase[],
+) {
+  const lines = [`**Visual check:** ${status}`];
+
+  if (newlyAddedPages.length > 0) {
+    lines.push(
+      '',
+      '### Newly added pages',
+      '',
+      'No baseline screenshots existed for these route and viewport combinations:',
+    );
+    appendPages(lines, newlyAddedPages);
+    lines.push('', 'Their generated screenshots should be manually reviewed.');
+  }
 
   if (changedPages.length > 0) {
     lines.push(
@@ -54,18 +77,13 @@ function buildSummary(result: FullResult, changedPages: ChangedPage[], finalFail
       '',
       'Visual differences were detected on these route and viewport combinations:',
     );
+    appendPages(lines, changedPages);
+    lines.push('', 'Test these pages before approving the visual changes.');
+  }
 
-    for (const page of changedPages) {
-      lines.push(`- [ ] \`${page.route}\` — ${page.viewports.join(', ')}`);
-    }
-
-    lines.push(
-      '',
-      'Test these pages at the listed viewport sizes before approving the visual changes.',
-      '',
-      '_PR comments include Amplify preview links for each page._',
-    );
-  } else if (finalFailures.length > 0 || result.status !== 'passed') {
+  if (newlyAddedPages.length > 0 || changedPages.length > 0) {
+    lines.push('', '_PR comments include Amplify preview links for each page._');
+  } else if (finalFailures.length > 0 || status !== 'passed') {
     lines.push(
       '',
       'No completed visual differences were identified. The test run failed for another reason; inspect the workflow logs.',
@@ -79,15 +97,23 @@ function buildSummary(result: FullResult, changedPages: ChangedPage[], finalFail
 
 class VisualSummaryReporter implements Reporter {
   private tests: TestCase[] = [];
+  private hasGlobalErrors = false;
 
   onBegin(_config: unknown, suite: Suite) {
     this.tests = suite.allTests();
   }
 
+  onError() {
+    this.hasGlobalErrors = true;
+  }
+
   onEnd(result: FullResult) {
     const finalFailures = this.tests.filter((test) => !test.ok());
-    const changedPages = collectChangedPages(finalFailures);
-    const hasNonVisualFailures = finalFailures.some(hasNonVisualFailure);
+    const newlyAddedPages = collectPages(this.tests, isNewPage);
+    const changedPages = collectPages(finalFailures, (test) =>
+      test.results.some((testResult) => testResult.errors.some(isScreenshotError)),
+    );
+    const hasNonVisualFailures = this.hasGlobalErrors || finalFailures.some(hasNonVisualFailure);
 
     mkdirSync(resultsDir, { recursive: true });
     writeFileSync(
@@ -95,6 +121,7 @@ class VisualSummaryReporter implements Reporter {
       `${JSON.stringify(
         {
           status: result.status,
+          newlyAddedPages,
           changedPages,
           hasNonVisualFailures,
         },
@@ -102,7 +129,10 @@ class VisualSummaryReporter implements Reporter {
         2,
       )}\n`,
     );
-    writeFileSync(summaryPath, buildSummary(result, changedPages, finalFailures));
+    writeFileSync(
+      summaryPath,
+      buildSummary(result.status, newlyAddedPages, changedPages, finalFailures),
+    );
   }
 }
 

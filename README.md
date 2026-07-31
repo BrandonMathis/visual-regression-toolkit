@@ -117,7 +117,9 @@ unavailable, `CI=1 npm run test:visual` forces a host-only run, but do not use i
 baselines.
 
 On failures, inspect `playwright-report/index.html`. The custom reporter also writes
-`test-results/visual-changes.json` and `test-results/visual-summary.md`.
+`test-results/visual-changes.json` and `test-results/visual-summary.md`. Routes without baseline
+screenshots are reported as newly added pages and do not fail the test run, but their generated
+screenshots should still be manually reviewed.
 
 ## GitHub Actions
 
@@ -181,9 +183,10 @@ The artifact download does not clear screenshots already present in the checkout
 downloaded into the same directory. Keep committed snapshots current for local use, but ensure the
 main baseline artifact is available for CI.
 
-Visual differences are advisory: the workflow reports changed routes and viewports without failing
-the check. Build failures, server failures, broken images, and other non-screenshot test failures
-still fail the workflow.
+Visual differences and newly added pages without baselines are advisory: the workflow reports their
+routes and viewports without failing the check. Newly added pages appear in a separate PR comment
+section. Build failures, server failures, broken images, and other non-screenshot test failures still
+fail the workflow.
 
 If `preview-app-domain` is supplied, the PR comment can construct Amplify preview links. Otherwise,
 it first looks for an existing Amplify deployment comment and falls back to listing routes without

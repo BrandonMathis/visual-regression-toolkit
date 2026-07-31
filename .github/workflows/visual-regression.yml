@@ -154,8 +154,31 @@ jobs:
                 .join(' ')
             }
 
+            function appendPages(lines, pages, previewUrl) {
+              for (const page of pages) {
+                const viewports = page.viewports.join(', ')
+                if (previewUrl) {
+                  const pageUrl = new URL(page.route, `${previewUrl}/`).toString()
+                  lines.push(`- [ ] [${pageLabel(page.route)}](${pageUrl}) (\`${page.route}\`) — ${viewports}`)
+                } else {
+                  lines.push(`- [ ] \`${page.route}\` — ${viewports}`)
+                }
+              }
+            }
+
             function buildCommentBody(previewUrl, payload) {
               const lines = ['## Visual testing recommendations', '', `**Visual check:** ${payload.status}`]
+
+              if (payload.newlyAddedPages?.length > 0) {
+                lines.push(
+                  '',
+                  '### Newly added pages',
+                  '',
+                  'No baseline screenshots existed for these route and viewport combinations:'
+                )
+                appendPages(lines, payload.newlyAddedPages, previewUrl)
+                lines.push('', 'Their generated screenshots should be manually reviewed.')
+              }
 
               if (payload.changedPages?.length > 0) {
                 lines.push(
@@ -164,24 +187,19 @@ jobs:
                   '',
                   'Visual differences were detected on these route and viewport combinations:'
                 )
-
-                for (const page of payload.changedPages) {
-                  const viewports = page.viewports.join(', ')
-                  if (previewUrl) {
-                    const pageUrl = new URL(page.route, `${previewUrl}/`).toString()
-                    lines.push(`- [ ] [${pageLabel(page.route)}](${pageUrl}) (\`${page.route}\`) — ${viewports}`)
-                  } else {
-                    lines.push(`- [ ] \`${page.route}\` — ${viewports}`)
-                  }
-                }
+                appendPages(lines, payload.changedPages, previewUrl)
 
                 lines.push(
                   '',
-                  'Test these pages at the listed viewport sizes before approving the visual changes.',
+                  'Test these pages before approving the visual changes.'
+                )
+              }
+
+              if (payload.newlyAddedPages?.length > 0 || payload.changedPages?.length > 0) {
+                lines.push(
                   '',
                   `[Download the Playwright visual diff report](${process.env.PLAYWRIGHT_REPORT_URL || runUrl}) and open \`playwright-report/index.html\` to review expected, actual, and diff screenshots.`
                 )
-
                 if (previewUrl) {
                   lines.push('', `**Amplify preview:** ${previewUrl}`)
                 } else {
@@ -190,12 +208,18 @@ jobs:
                     '_Amplify preview URL was not found. Pass `preview-app-domain` to the reusable workflow or wait for the Amplify deploy comment._'
                   )
                 }
-              } else if (payload.status !== 'passed') {
+              }
+
+              if (
+                !payload.newlyAddedPages?.length &&
+                !payload.changedPages?.length &&
+                payload.status !== 'passed'
+              ) {
                 lines.push(
                   '',
                   'No completed visual differences were identified. The test run failed for another reason; inspect the workflow logs.'
                 )
-              } else {
+              } else if (!payload.newlyAddedPages?.length && !payload.changedPages?.length) {
                 lines.push('', '✅ No pages need additional visual testing.')
               }
 
@@ -203,7 +227,11 @@ jobs:
               return [marker, ...lines].join('\n')
             }
 
-            let payload = { status: process.env.TEST_OUTCOME, changedPages: [] }
+            let payload = {
+              status: process.env.TEST_OUTCOME,
+              newlyAddedPages: [],
+              changedPages: [],
+            }
             if (fs.existsSync(changesPath)) {
               payload = JSON.parse(fs.readFileSync(changesPath, 'utf8'))
             }
@@ -233,14 +261,15 @@ jobs:
               })
             }
 
-      - name: Warn about genuine test errors
+      - name: Fail genuine test errors
         if: ${{ always() && steps.visual-tests.outcome == 'failure' }}
-        continue-on-error: true
         run: |
           node <<'NODE'
           const fs = require('node:fs')
           const path = 'test-results/visual-changes.json'
           if (!fs.existsSync(path)) process.exit(1)
           const result = JSON.parse(fs.readFileSync(path, 'utf8'))
-          if (result.hasNonVisualFailures || !result.changedPages?.length) process.exit(1)
+          const hasAdvisoryPages =
+            result.newlyAddedPages?.length > 0 || result.changedPages?.length > 0
+          if (result.hasNonVisualFailures || !hasAdvisoryPages) process.exit(1)
           NODE
