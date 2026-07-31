@@ -13,7 +13,7 @@ import { PLAYWRIGHT_CLI, PLAYWRIGHT_IMAGE } from './playwright.js';
 const CONFIG = 'playwright.visual.config.ts';
 const update = process.argv.includes('--update');
 const playwrightArgs = ['test', '--config', CONFIG];
-if (update) playwrightArgs.push('--update-snapshots');
+playwrightArgs.push(update ? '--update-snapshots' : '--update-snapshots=missing');
 
 function run(command, args, options = {}) {
   const result = spawnSync(command, args, { stdio: 'inherit', ...options });

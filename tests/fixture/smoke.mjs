@@ -34,6 +34,12 @@ function verifyBaselines() {
   }
 }
 
+function removeRequestRenderedBaselines() {
+  for (const project of ['desktop', 'tablet', 'phone']) {
+    rmSync(resolve(fixture, 'tests/visual/__screenshots__', project, 'request-rendered.png'));
+  }
+}
+
 rmSync(resolve(fixture, '.next'), { recursive: true, force: true });
 rmSync(resolve(fixture, 'playwright-report'), { recursive: true, force: true });
 rmSync(resolve(fixture, 'test-results'), { recursive: true, force: true });
@@ -42,7 +48,24 @@ rmSync(resolve(fixture, 'tests/visual/__screenshots__'), { recursive: true, forc
 try {
   run(['--update']);
   verifyBaselines();
+
+  removeRequestRenderedBaselines();
   run([]);
+  verifyBaselines();
+
+  const additions = JSON.parse(
+    readFileSync(resolve(fixture, 'test-results/visual-changes.json'), 'utf8'),
+  );
+  const addedPage = additions.newlyAddedPages.find(({ route }) => route === '/request-rendered');
+  if (
+    additions.status !== 'passed' ||
+    additions.changedPages.length > 0 ||
+    additions.hasNonVisualFailures ||
+    !addedPage ||
+    addedPage.viewports.join(',') !== 'desktop,phone,tablet'
+  ) {
+    throw new Error('Missing baselines were not reported as newly added pages');
+  }
 
   writeFileSync(cssPath, `${originalCss}\n.card { background: #101010; }\n`);
   rmSync(resolve(fixture, '.next'), { recursive: true, force: true });
